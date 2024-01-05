@@ -1,64 +1,38 @@
 import os
-import time
+import argparse
 import requests
 import logging
 import re
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 from zipfile import ZipFile
 from zipfile import ZIP_DEFLATED
 from zipfile import ZIP_STORED
-# Requires
-# watchdog
-# requests
+
 #########################################
 ############VARIABLES####################
 #########################################
-API = "AAAA"  # RAWG API Key
-watchFolder = "/root/test/watch/" # Folder to be observed by the script, example "/this/observe/folder/"
-storeFolder = "/root/test/store/" # Where your files will be stored after compression,
-                                                # example # "/thisis/compress/folder/"
+API = "huh"  # RAWG API Key
+storeFolder = "huh"  # Where your files will be stored after compression, example /mnt/folder/location/
+categoryName = "Juegos"
 logFileLocation = "gameZip.log"
-doCompression = True #Set to True if you want compression, else set to False. Default = True
+doCompression = True
 if doCompression:
     compressionMethod = ZIP_DEFLATED
 else:
     compressionMethod = ZIP_STORED
-  
 # Valid Options:
-# ZIP_STORED (0% compression), ZIP_DEFLATED
+# ZIP_STORED (0% compression), ZIP_DEFLATE, ZIP_LZMA
 #########################################
 #########################################
 #########################################
 Logging = False  # Set to True if you want Logging, debugging purposes
 # Note: Debugging is VERY basic, you may want to add more ways to debug if you found a problem
-# Note2: using logging.info() in code isn't a good practice
+# Note2: using logging.info() in code isn't a good practice according to what i've read, I have no need to change it so.
 if Logging:
     logging.basicConfig(filename=f"{logFileLocation}", format='%(asctime)s %(message)s', filemode='w')
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
 
 releaseDate = None
-
-
-class MyHandler(FileSystemEventHandler):
-    def __init__(self):
-        super().__init__()
-
-    def on_created(self, event):
-        if event.is_directory:
-            folder_path = event.src_path
-            while not self.is_file_fully_copied(folder_path):  # This waits until the file is done copying
-                time.sleep(2)
-            game_name = fetch_game_name(folder_path)
-            #print(f"Compressing {game_name} {releaseDate}")  # Debug
-            compress_folder(folder_path, game_name)
-
-    def is_file_fully_copied(self, file_path):
-        # Check if the file is fully copied by waiting for it to remain unchanged for a period of time
-        initial_size = os.path.getsize(file_path)
-        time.sleep(5)
-        return os.path.getsize(file_path) == initial_size
 
 
 def scrub_filename(name):
@@ -110,13 +84,18 @@ def compress_folder(folder_path, game_name):
 
 
 def main():
-    path_to_watch = watchFolder
-    event_handler = MyHandler()
-    observer = Observer()
-    print(f"GameZIP: Watching directory: {path_to_watch}")
-    observer.schedule(event_handler, path=path_to_watch, recursive=False)
-    observer.start()
-    observer.join()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input", help="Input file location")
+    parser.add_argument("-c", "--category", action="store", help="Torrent category")
+    parser.add_argument("-o", "--output", action="store", help="Where to output")
+    args = parser.parse_args()
+    if args.category == {categoryName}:
+        folderPath = args.input
+        gameName = fetch_game_name(folderPath)
+        global storeFolder
+        if args.output:
+            storeFolder = args.output
+        compress_folder(folderPath, gameName)
 
 
 if __name__ == "__main__":
