@@ -1,14 +1,12 @@
-# GameZip
-Automatically zip files in source folder to target folder, auto-corrects the game's name and adds the release date to it.
+# Torrent GameZip
+Designed to be ran by a Torrent client after torrent finishes downloading
 
-Designed to be ran in the background as a service in a linux environment
-
-Requires 'watchdog' and 'requests' modules, install with "apt install python3-watchdog python3-requests"
+Requires 'requests' modules, install with "apt install python3-requests"
 
 Must be configured inside the file, where:
 API = Your RAWG API Key
 
-watchFolder = the folder the script will watch for game's folders
+categoryName = Your torrent's games category. Made so the script avoids unnecesary compressing of non-game torrents, like linux ISOs
 
 storeFolder = the folder the script will store compressed and renamed versions of the folders in watchFolder
 
@@ -16,10 +14,12 @@ This script will automatically convert messy names to good names, for example, M
 
 You can choose to use compression (Zip Deflated) or disable (0% compression) by changing doCompression variable (Default: True)
 
-Known problems and bugs: 
+If using Qbittorrent, look for "run external command on torrent finished" and set /usr/bin/python3 main.py %F --category %L --output /desired/output/location/
 
-1) If the script was executed after there were folders in watchFolder, the script won't read them. Solution is moving (not copy, move with "mv") folders to another temporal folder outside of it, then moving them back. My skills aren't good enough to solve this
+The parameters are:
 
+-c --category = for the torrent's category
 
+-o --output = Desired output location for compressed file
 
-Made in python 3.11 with 35% of help from AI and my experience from java, this is my first Python script.
+Made in python 3.11 with 25% of help from AI and my experience from java, this is my first Python script
