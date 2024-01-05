@@ -89,7 +89,7 @@ def main():
     parser.add_argument("-c", "--category", action="store", help="Torrent category")
     parser.add_argument("-o", "--output", action="store", help="Where to output")
     args = parser.parse_args()
-    if args.category == {categoryName}:
+    if args.category == categoryName:
         folderPath = args.input
         gameName = fetch_game_name(folderPath)
         global storeFolder
