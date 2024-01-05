@@ -3,7 +3,7 @@ Automatically zip files in source folder to target folder, auto-corrects the gam
 
 Designed to be ran in the background as a service in a linux environment
 
-Requires 'watchdog' and 'requests' modules, install with "pip install watchdog requests"
+Requires 'watchdog' and 'requests' modules, install with "apt install python3-watchdog python3-requests"
 
 Must be configured inside the file, where:
 API = Your RAWG API Key
