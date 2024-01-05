@@ -51,7 +51,7 @@ class MyHandler(FileSystemEventHandler):
             while not self.is_file_fully_copied(folder_path):  # This waits until the file is done copying
                 time.sleep(2)
             game_name = fetch_game_name(folder_path)
-            print(f"Empezando a comprimieeeeeeer {game_name} {releaseDate}")  # Debug
+            #print(f"Compressing {game_name} {releaseDate}")  # Debug
             compress_folder(folder_path, game_name)
 
     def is_file_fully_copied(self, file_path):
