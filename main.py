@@ -7,7 +7,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from zipfile import ZipFile
 from zipfile import ZIP_DEFLATED
-
+from zipfile import ZIP_STORED
 # Requires
 # watchdog
 # requests
@@ -19,7 +19,13 @@ watchFolder = "/root/test/watch/" # Folder to be observed by the script, example
 storeFolder = "/root/test/store/" # Where your files will be stored after compression,
                                                 # example # "/thisis/compress/folder/"
 logFileLocation = "gameZip.log"
-compressionMethod = "ZIP_LZMA"  # Valid Options:
+doCompression = True #Set to True if you want compression, else set to False. Default = True
+if doCompression:
+    compressionMethod = ZIP_DEFLATED
+else:
+    compressionMethod = ZIP_STORED
+  
+# Valid Options:
 # ZIP_STORED (0% compression), ZIP_DEFLATE ZIP_LZMA
 #########################################
 #########################################
@@ -89,7 +95,7 @@ def compress_folder(folder_path, game_name):
     if Logging:
         logging.info(f"Starting to compress {game_name} to {storeFolder}")
     try:
-        with ZipFile(zip_filename, 'x', ZIP_DEFLATED) as zip_file:
+        with ZipFile(zip_filename, 'x', compressionMethod) as zip_file:
             for folder_root, _, files in os.walk(folder_path):
                 for file in files:
                     file_path = os.path.join(folder_root, file)
