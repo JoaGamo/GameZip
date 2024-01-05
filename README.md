@@ -7,7 +7,9 @@ Requires 'watchdog' and 'requests' modules, install with "apt install python3-wa
 
 Must be configured inside the file, where:
 API = Your RAWG API Key
+
 watchFolder = the folder the script will watch for game's folders
+
 storeFolder = the folder the script will store compressed and renamed versions of the folders in watchFolder
 
 This script will automatically convert messy names to good names, for example, M.i.n_.e.c.raft gets converted to "Minecraft (2011)" and store them in a .zip file, guided by doCompression if you wanted it compressed or not.
