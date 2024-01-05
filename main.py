@@ -26,7 +26,7 @@ else:
     compressionMethod = ZIP_STORED
   
 # Valid Options:
-# ZIP_STORED (0% compression), ZIP_DEFLATE ZIP_LZMA
+# ZIP_STORED (0% compression), ZIP_DEFLATED
 #########################################
 #########################################
 #########################################
