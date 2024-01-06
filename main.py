@@ -8,7 +8,7 @@ import subprocess
 ############VARIABLES####################
 #########################################
 API = "asd"  # RAWG API Key
-storeFolder = "/asd/dfw/hfh/"  # Where your files will be stored after compression,
+storeFolder = "/asd/asd/qwe/"  # Where your files will be stored after compression,
 categoryName = "Juegos"
 logFileLocation = "gameZip.log"
 multithread = 8 #Number of threads to use with 7z/7zz
@@ -18,13 +18,11 @@ compressionCMD = '7z'
 #########################################
 #########################################
 #########################################
-Logging = False  # Set to True if you want Logging, debugging purposes
 # Note: Debugging is VERY basic, you may want to add more ways to debug if you found a problem
-# Note2: using logging.info() in code isn't a good practice according to what i've read, I have no need to change it so.
-if Logging:
-    logging.basicConfig(filename=f"{logFileLocation}", format='%(asctime)s %(message)s', filemode='w')
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
+logging.basicConfig(filename=f"{logFileLocation}", format='%(asctime)s %(message)s', filemode='a')
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
 releaseDate = None
 
 
@@ -55,13 +53,19 @@ def fetch_game_name(folder_path):
     return juego
 
 
+
 def compression(folder_path, game_name):
-    compression_cmd = [f'{compressionCMD}']
-    compression_cmd.extend(['a', f'{storeFolder}{game_name} ({releaseDate})', folder_path])
-    compression_cmd.append(f'-mmt={multithread}')
-    compression_cmd.append('-o ' + storeFolder)
-    print(compression_cmd)
-    subprocess.run(compression_cmd)
+    if not os.path.exists(f"{storeFolder}{game_name} ({releaseDate}).7z"):
+        compression_cmd = [f'{compressionCMD}']
+        compression_cmd.extend(['a', f'{storeFolder}{game_name} ({releaseDate})', folder_path])
+        compression_cmd.append(f'-mmt={multithread}')
+        compression_cmd.append('-o ' + storeFolder)
+        print(compression_cmd)
+        subprocess.run(compression_cmd)
+        logger.info(f"Successfully compressed {game_name} to {storeFolder}{game_name} {releaseDate}")
+    else:
+        logger.warning(f"File {storeFolder}{game_name} already exists! NOT COMPRESSING {folder_path}!")
+
 
 
 def main():
@@ -72,8 +76,8 @@ def main():
     if args.category == categoryName:
         folderPath = args.input
         gameName = fetch_game_name(folderPath)
+        logger.info(f"Starting to compress {folderPath}")
         compression(folderPath, gameName)
-
 
 if __name__ == "__main__":
     main()
