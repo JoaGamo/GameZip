@@ -3,24 +3,18 @@ import argparse
 import requests
 import logging
 import re
-from zipfile import ZipFile
-from zipfile import ZIP_DEFLATED
-from zipfile import ZIP_STORED
-
+import subprocess
 #########################################
 ############VARIABLES####################
 #########################################
-API = "huh"  # RAWG API Key
-storeFolder = "huh"  # Where your files will be stored after compression, example /mnt/folder/location/
+API = "asd"  # RAWG API Key
+storeFolder = "/asd/dfw/hfh/"  # Where your files will be stored after compression,
 categoryName = "Juegos"
 logFileLocation = "gameZip.log"
-doCompression = True
-if doCompression:
-    compressionMethod = ZIP_DEFLATED
-else:
-    compressionMethod = ZIP_STORED
-# Valid Options:
-# ZIP_STORED (0% compression), ZIP_DEFLATE, ZIP_LZMA
+multithread = 8 #Number of threads to use with 7z/7zz
+# NOTE: IF YOU ARE USING 7zz (newer p7zip package from apt), change THIS
+compressionCMD = '7z'
+# Else use 7z if using the arch AUR p7zip or something else.
 #########################################
 #########################################
 #########################################
@@ -31,7 +25,6 @@ if Logging:
     logging.basicConfig(filename=f"{logFileLocation}", format='%(asctime)s %(message)s', filemode='w')
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
-
 releaseDate = None
 
 
@@ -41,12 +34,11 @@ def scrub_filename(name):
 
 
 def fetch_game_name(folder_path):
-    api_key = API
     rawg_url = "https://api.rawg.io/api/games"
     folder_name = os.path.basename(folder_path)
     folder_name = scrub_filename(folder_name)
     # API request
-    params = {"key": api_key, "search": folder_name}
+    params = {"key": API, "search": folder_name}
     response = requests.get(rawg_url, params=params)
 
     if response.status_code == 200:
@@ -63,39 +55,24 @@ def fetch_game_name(folder_path):
     return juego
 
 
-def compress_folder(folder_path, game_name):
-    zip_filename = f"{storeFolder}{game_name} ({releaseDate}).zip"
-    print(f"Starting to compress {game_name} ({releaseDate}) to {storeFolder}")
-    if Logging:
-        logging.info(f"Starting to compress {game_name} to {storeFolder}")
-    try:
-        with ZipFile(zip_filename, 'x', compressionMethod) as zip_file:
-            for folder_root, _, files in os.walk(folder_path):
-                for file in files:
-                    file_path = os.path.join(folder_root, file)
-                    arcname = os.path.relpath(file_path, folder_path)
-                    zip_file.write(file_path, arcname=arcname)
-    except FileExistsError:
-        print(f"The file already exists!, NOT compressing {game_name}")
-
-    print(f"{game_name} compressed successfully")
-    if Logging:
-        logging.info(f"Game '{game_name}'' has been compressed successfully!")
+def compression(folder_path, game_name):
+    compression_cmd = [f'{compressionCMD}']
+    compression_cmd.extend(['a', f'{storeFolder}{game_name}', folder_path])
+    compression_cmd.append(f'-mmt={multithread}')
+    compression_cmd.append('-o ' + storeFolder)
+    print(compression_cmd)
+    subprocess.run(compression_cmd)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("input", help="Input file location")
+    parser.add_argument("input", help="Archivo input")
     parser.add_argument("-c", "--category", action="store", help="Torrent category")
-    parser.add_argument("-o", "--output", action="store", help="Where to output")
     args = parser.parse_args()
     if args.category == categoryName:
         folderPath = args.input
         gameName = fetch_game_name(folderPath)
-        global storeFolder
-        if args.output:
-            storeFolder = args.output
-        compress_folder(folderPath, gameName)
+        compression(folderPath, gameName)
 
 
 if __name__ == "__main__":
