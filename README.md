@@ -15,7 +15,7 @@ categoryName = Your torrent's games category. Made so the script avoids unnecesa
 
 storeFolder = the folder the script will store compressed and renamed version of the game
 
-This script will automatically convert messy names to good names, for example, M.i.n_.e.c.raft gets converted to "Minecraft (2011)" and store them in a .zip file, guided by doCompression if you wanted it compressed or not.
+This script will automatically convert messy names to good names, for example, M.i.n_.e.c.raft gets converted to "Minecraft (2011)" and store them in a .7z file
 
 
 If using Qbittorrent, look for "run external command on torrent finished" and set /usr/bin/python3 main.py -c %L '"%F"' (note there's ' ' and " " combined for files with spaces)
