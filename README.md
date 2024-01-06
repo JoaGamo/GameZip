@@ -1,9 +1,9 @@
 # Torrent GameZip
 Designed to be ran by a Torrent client on torrent completion in a linux environment
+> [!NOTE]
+> **Requires 'requests' modules** (for RAWG API), install with "apt install python3-requests". **Also requires 7z package,** install with "apt install p7zip" or p7zip from AUR if using arch.
 
-Requires 'requests' modules, install with "apt install python3-requests". Also requires 7z package, install with "apt install p7zip" or p7zip from AUR if using arch.
-
-Must be configured inside the file, where:
+**Must be configured inside the main.py file**, where:
 
 compressionCMD = set '7zz' if using the apt package, or '7z' if using the previous command.
 
@@ -23,11 +23,15 @@ If using Qbittorrent, look for "run external command on torrent finished" and se
 The parameters are:
 
 -c --category = for the torrent's category
+```
+python3 main.py -c [CATEGORY] [INPUT]
+```
 
-python3 main.py -c CATEGORY INPUT
+examples
+```bash
+python3 main.py -c Juegos /mnt/gaming/ilikethisgame/
 
-example
-
-python3 main.py -c Juegos /mnt/gaming/goodgame/
+python3 main.py -c Juegos "/SquareRoot\ Collection\ \[Testing\ Repack\]/"
+```
 
 Made in python 3.11 with 20% of help from AI and my experience from java, this is my first Python script
