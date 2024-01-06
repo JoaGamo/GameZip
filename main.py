@@ -57,7 +57,7 @@ def fetch_game_name(folder_path):
 
 def compression(folder_path, game_name):
     compression_cmd = [f'{compressionCMD}']
-    compression_cmd.extend(['a', f'{storeFolder}{game_name}', folder_path])
+    compression_cmd.extend(['a', f'{storeFolder}{game_name} ({releaseDate})', folder_path])
     compression_cmd.append(f'-mmt={multithread}')
     compression_cmd.append('-o ' + storeFolder)
     print(compression_cmd)
