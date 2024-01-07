@@ -1,5 +1,5 @@
 # Torrent GameZip
-Designed to be ran by a Torrent client on torrent completion in a linux environment
+Designed to be ran by a Torrent client on torrent completion in a linux environment, but can also work standalone
 > [!NOTE]
 > **Requires 'requests' modules** (for RAWG API), install with "apt install python3-requests". **Also requires 7z package,** install with "apt install p7zip" or p7zip from AUR if using arch.
 
