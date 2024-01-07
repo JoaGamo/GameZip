@@ -34,4 +34,9 @@ python3 main.py -c Juegos /mnt/gaming/ilikethisgame/
 python3 main.py -c Juegos "/SquareRoot\ Collection\ \[Testing\ Repack\]/"
 ```
 
+example from my qbittorrent "run on completion" command:
+
+```
+"/usr/bin/ssh -i /home/qbittorrent-nox/.ssh/id_rsa root@192.168.0.102 python3 /root/GameZip/main.py -c %L '"%F"'" # It means it executes the script, stored in another server, through ssh. In the future this script could fetch for the least used node and call the script in it.
+```
 Made in python 3.11 with 20% of help from AI and my experience from java, this is my first Python script
