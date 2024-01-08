@@ -18,7 +18,7 @@ storeFolder = the folder the script will store compressed and renamed version of
 This script will automatically convert messy names to good names, for example, M.i.n_.e.c.raft gets converted to "Minecraft (2011)" and store them in a .7z file
 
 
-If using Qbittorrent, look for "run external command on torrent finished" and set /usr/bin/python3 main.py -c %L '"%F"' (note there's ' ' and " " combined for files with spaces)
+If using Qbittorrent, look for "run external command on torrent finished" and set /usr/bin/python3 main.py -c %L '"%R"' (note there's ' ' and " " combined for files with spaces)
 
 The parameters are:
 
@@ -37,6 +37,6 @@ python3 main.py -c Juegos "/SquareRoot\ Collection\ \[Testing\ Repack\]/"
 example from my qbittorrent "run on completion" command:
 
 ```
-"/usr/bin/ssh -i /home/qbittorrent-nox/.ssh/id_rsa root@192.168.0.102 python3 /root/GameZip/main.py -c %L '"%F"'" # It means it executes the script, stored in another server, through ssh. In the future this command could execute another script to fetch for the least used node and call the script in it.
+/usr/bin/ssh -i /home/qbittorrent-nox/.ssh/id_rsa root@192.168.0.102 python3 /root/GameZip/main.py -c %L '"%R"' # It means it executes the script, stored in another server, through ssh. In the future this command could execute another script to fetch for the least used node and call the script in it.
 ```
 Made in python 3.11 with 20% of help from AI and my experience from java, this is my first Python script
