@@ -29,7 +29,7 @@ releaseDate = None
 
 def scrub_filename(name):
     # Remove special characters and spaces from the name
-    return re.sub(r'[^\w\s]', '', name)
+    return re.sub(r'[^\w\s]', ' ', name)
 
 
 def fix_filename(file):
@@ -55,7 +55,7 @@ def fetch_game_name(folder_path):
             juego = game_info["name"]
             juego = scrub_filename(juego)
 
-            global releaseDate  # Game's release date
+            global releaseDate
             releaseDate = game_info.get("released", "")[:4]
     else:
         juego = None
