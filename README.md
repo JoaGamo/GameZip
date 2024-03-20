@@ -1,19 +1,24 @@
 # GameZip
 Designed to be ran by a Torrent client on torrent completion in a linux environment, but can also work standalone
+
+> [!WARNING]
+> RAWG API was removed on the last update in favour of IGDB API.
+> it requires a 5 step setup involving a Twitch account, read here https://api-docs.igdb.com/#getting-started
+> If you would prefer to not use the new API system, stay below version 0.6 of this script.
+
+
 > [!NOTE]
-> **Requires 'requests' modules** (for RAWG API), install with "apt install python3-requests". **Also requires 7z package,** install with "apt install p7zip" or p7zip from AUR if using arch.
+> Install requirements with 'pip install -r requirements.txt', you also require 7z in your system. Use "apt install p7zip" for Debian systems or p7zip from AUR.
 
 **.env.example must be renamed to .env and configured**, where:
 
-compressionCMD = set '7zz' if using the apt package, or '7z' if using the previous command.
+multithread = Set amount of CPU threads for 7z to use during compression
 
-multithread= Set amount of CPU threads for 7z to use during compression
+API = Your IGDB API Key
 
-API = Your RAWG API Key
+categoryName = Your torrent's games category. Made so the script avoids compressing other stuff from your torrent client that are not games
 
-categoryName = Your torrent's games category. Made so the script avoids unnecesary compressing of non-game torrents, like linux ISOs
-
-storeFolder = the folder the script will store compressed and renamed version of the game
+storeFolder = where the script will store compressed and renamed version of the game
 
 This script will automatically convert messy names to good names, for example, M.i.n_.e.c.raft gets converted to "Minecraft (2011)" and store them in a .7z file
 
@@ -24,19 +29,24 @@ The parameters are:
 
 -c --category = for the torrent's category
 ```
-python3 main.py -c [CATEGORY] [INPUT"
+python3 main.py -c [CATEGORY] [INPUT]"
 ```
 
 examples
 ```bash
-python3 main.py -c Juegos /mnt/gaming/ilikethisgame/
+python3 main.py -c Games /mnt/gaming/ilikethisgame/
 
-python3 main.py -c Juegos "/SquareRoot\ Collection\ \[Testing\ Repack\]/"
+python3 main.py -c Games "/SquareRoot\ Collection\ \[Testing\ Repack\]/"
 ```
 
 example from my qbittorrent "run on completion" command:
 
 ```
-/usr/bin/ssh -i /home/qbittorrent-nox/.ssh/id_rsa root@192.168.0.102 python3 /root/GameZip/main.py -c %L '"%R"' # It means it executes the script, stored in another server, through ssh. In the future this command could execute another script to fetch for the least used node and call the script in it.
+/usr/bin/ssh -i /home/qbittorrent-nox/.ssh/id_rsa root@192.168.0.102 python3 /root/GameZip/main.py -c %L '"%R"' 
+# It means it executes the script, stored in another more powerful server than my NAS, through ssh
 ```
+### Standalone usage:
+Configure a dummy category, for example "A",
+
+then simply execute the script with python3 main.py -c A /mnt/gaming/your/game/
 

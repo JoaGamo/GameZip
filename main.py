@@ -4,7 +4,9 @@ import requests
 import re
 import subprocess
 import logging
+from shutil import which
 from dotenv import load_dotenv
+import IGDBWrapper
 
 # env
 load_dotenv()
@@ -12,17 +14,41 @@ API = os.getenv("API")
 categoryName = os.getenv("categoryName")
 logFileLocation = os.getenv("logFileLocation")
 multithread = os.getenv("multithread")
-compressionCMD = os.getenv("compressionCMD")
+#compressionCMD = os.getenv("compressionCMD") Deprecated.
 storeFolder = os.getenv("storeFolder")
-#
-# Note: Debugging is VERY basic, you may want to add more ways to debug if you found a problem
+
+
+media1_name = os.getenv("media1_name")
+media2_name = os.getenv("media2_name")
+media3_name = os.getenv("media3_name")
+media1_location = os.getenv("media1_location")
+media2_location = os.getenv("media2_location")
+media3_location = os.getenv("media3_location")
+
+
+
+if which("7z") == None:
+    compressionCMD = "7zz"
+else:
+    compressionCMD = "7z"
+
+
+# IGDB stuff
+
+
 logging.basicConfig(filename=f"{logFileLocation}", format='%(asctime)s %(message)s', filemode='a')
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
+def hardlink_files(folder_path, final_path):
+    # By limitations of "ln" for folders, I decided to use 'cp -l' parameter to create hard links
+    # for all files recursively
+    subprocess.run(f"cp -lr \'{folder_path}\' {final_path}", shell=True)
+
+
 def scrub_filename(name):
-    # Remove special characters and spaces from the name
+    # Remove special characters and spaces from the name, so we can search our game's API easily.
     return re.sub(r'[^\w\s]', '', name)
 
 
@@ -47,13 +73,16 @@ def fetch_game_name(folder_path):
         if data['results']:
             game_info = data['results'][0]
             juego = game_info["name"]
+            logger.debug(f"game detected was {juego}")
             juego = scrub_filename(juego)
+            logger.debug(f"after filename scrub: {juego}")
 
             global releaseDate  # Game's release date
             releaseDate = game_info.get("released", "")[:4]
     else:
         juego = None
     return juego
+
 
 
 def compression(folder_path, game_name):
@@ -68,16 +97,27 @@ def compression(folder_path, game_name):
         logger.warning(f"File {storeFolder}{game_name} already exists! NOT COMPRESSING {folder_path}!")
 
 
-def main():
+def main(): 
     parser = argparse.ArgumentParser()
-    parser.add_argument("input", help="Archivo input")
+    parser.add_argument("input", help="Input file")
     parser.add_argument("-c", "--category", action="store", help="Torrent category")
     args = parser.parse_args()
     folderPath = args.input
     if args.category == categoryName:
-        gameName = fetch_game_name(folderPath)
+        game_name = fetch_game_name(folderPath)
         logger.info(f"Starting to compress {folderPath}")
-        compression(folderPath, gameName)
+        compression(folderPath, game_name)
+    # This is why the script asks for a category.
+    # You may want to use this script alongside your other contents to hardlink them.
+    elif args.category == media1_name:
+        logger.info(f"Hardlinking media1 {folderPath} to {media1_location}")
+        hardlink_files(folderPath, media1_location)
+    elif args.category == media2_name:
+        logger.info(f"Hardlinking media2 {folderPath} to {media2_location}")
+        hardlink_files(folderPath, media2_location)
+    elif args.category == media3_name:
+        logger.info(f"Hardlinking media3 {folderPath} to {media3_location}")
+        hardlink_files(folderPath, media3_location)
 
 
 if __name__ == "__main__":
