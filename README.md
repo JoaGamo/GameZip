@@ -1,10 +1,10 @@
 # GameZip
 Designed to be ran by a Torrent client on torrent completion in a linux environment, but can also work standalone
 
-> [!WARNING]
-> RAWG API was removed on the last update in favour of IGDB API.
+> [!INFO]
+> I added IGDB in the last update if you would prefer to not use RAWG
 > it requires a 5 step setup involving a Twitch account, read here https://api-docs.igdb.com/#getting-started
-> If you would prefer to not use the new API system, stay below version 0.6 of this script.
+> If you would prefer to use IGDB, leave "API=" field empty.
 
 
 > [!NOTE]
@@ -14,13 +14,13 @@ Designed to be ran by a Torrent client on torrent completion in a linux environm
 
 multithread = Set amount of CPU threads for 7z to use during compression
 
-API = Your IGDB API Key
+API = Your RAWG API Key
 
 categoryName = Your torrent's games category. Made so the script avoids compressing other stuff from your torrent client that are not games
 
 storeFolder = where the script will store compressed and renamed version of the game
 
-This script will automatically convert messy names to good names, for example, M.i.n_.e.c.raft gets converted to "Minecraft (2011)" and store them in a .7z file
+This script will automatically convert messy names to good names, for example, M.i.n_.e.c.raft gets converted to "Minecraft (2011)" and stores them in a .7z file
 
 
 If using Qbittorrent, look for "run external command on torrent finished" and set /usr/bin/python3 main.py -c %L '"%R"' (note there's ' ' and " " combined for files with spaces, I suggest enabling "create subfolders" because without it this script can't directly work with .rar/.zip files)
