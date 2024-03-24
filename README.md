@@ -1,7 +1,7 @@
 # GameZip
 Designed to be ran by a Torrent client on torrent completion in a linux environment, but can also work standalone
 
-> [!INFO]
+> [!IMPORTANT]
 > I added IGDB in the last update if you would prefer to not use RAWG
 > it requires a 5 step setup involving a Twitch account, read here https://api-docs.igdb.com/#getting-started
 > If you would prefer to use IGDB, leave "API=" field empty.
