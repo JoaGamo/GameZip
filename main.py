@@ -5,6 +5,7 @@ import re
 import subprocess
 import logging
 import json
+import datetime
 
 from shutil import which
 from dotenv import load_dotenv
@@ -12,13 +13,12 @@ from igdb.wrapper import IGDBWrapper
 from igdb.igdbapi_pb2 import GameResult
 # env
 load_dotenv()
-#API = os.getenv("API") Deprecated.
+rawg_API = os.getenv("API")
 categoryName = os.getenv("categoryName")
 logFileLocation = os.getenv("logFileLocation")
 multithread = os.getenv("multithread")
-#compressionCMD = os.getenv("compressionCMD") Deprecated.
-storeFolder = os.getenv("storeFolder")
 
+storeFolder = os.getenv("storeFolder")
 # IGDB Stuff
 client_id = os.getenv("client_id")
 client_secret = os.getenv("client_secret")
@@ -47,8 +47,8 @@ def hardlink_files(folder_path, final_path):
 
 
 def scrub_filename(name):
-    # Remove special characters and spaces from the name, so we can search our game's API easily.
-    return re.sub(r'[^\w\s]', '', name)
+    # Remove special characters and stuff between [brackets] from the name, so we can search our game's API easily.
+    return re.sub(r'\[.*?\]|\W(?<!\s)|\d', '', name)
 
 
 def fix_filename(file):
@@ -59,36 +59,40 @@ def fix_filename(file):
 
 
 def fetch_game_name(folder_path):
+    # Do note that there's no error handling or status_code checking
+    # We don't want the script to continue if anything fails from this point, as it's wasted computing power
     folder_name = fix_filename(folder_path)
     folder_name = os.path.basename(folder_name)
     folder_name = scrub_filename(folder_name)
-
-    r = requests.post(f"https://id.twitch.tv/oauth2/token?client_id={client_id}&client_secret={client_secret}&grant_type=client_credentials")
-    access_token = json.loads(r._content)['access_token']
-    # DEBUG
-    print(f"Lo que se va a buscar {folder_name}")
-
-    result_message = IGDBWrapper(client_id, access_token).api_request('games.pb',f'search "{folder_name}"; fields name, first_release_date; limit 1;')
-    result = GameResult()
-    result.ParseFromString(result_message)
-    print (result.games)
-    try:
-        game_info = result.games[0]
-        print(game_info) # Debug
-    except: return "NOTFOUND"
-
-    print(game_info)
-
-"""
-    juego = game_info.get("name")
-    logger.debug(f"game detected was {juego}")
     global releaseDate
-    releaseDate = game_info.get("first_release_date", "")[:4]
-    # DEBUG
-    print(f"Fecha obtenida {releaseDate}")
-    return juego
-"""
+    if rawg_API == None:
+        #IGDB Stuff
+        r = requests.post(f"https://id.twitch.tv/oauth2/token?client_id={client_id}&client_secret={client_secret}&grant_type=client_credentials")
+        access_token = json.loads(r._content)['access_token']
+        #
+        result_message = IGDBWrapper(client_id, access_token).api_request('games.pb',f'search "{folder_name}"; fields name, first_release_date; limit 1;')
+        result = GameResult()
+        result.ParseFromString(result_message)
+        for game in result.games:
+            if hasattr(game, "name") and hasattr(game, "first_release_date"):
+                juego = game.name
+                releaseDate = game.first_release_date.seconds
+                break
+        
+        releaseDate = datetime.datetime.fromtimestamp(releaseDate)
+        releaseDate = releaseDate.year
+    else:
+        # RAWG Stuff
+        rawg_url = "https://api.rawg.io/api/games"
+        params = {"key": rawg_API, "search": folder_name}
+        response = requests.get(rawg_url, params=params)
+        data = response.json()
+        game_info = data['results'][0]
+        juego = game_info["name"]
+        releaseDate = game_info.get("released", "")[:4]
 
+    logger.debug(f"game detected was {juego}")
+    return juego
 
 
 def compression(folder_path, game_name):
@@ -113,6 +117,8 @@ def main():
         game_name = fetch_game_name(folderPath)
         logger.info(f"Starting to compress {folderPath}")
         compression(folderPath, game_name)
+        logger.info(f"Compressed {game_name} into {folderPath}")
+
     # This is why the script asks for a category.
     # You may want to use this script alongside your other contents to hardlink them.
     elif args.category == media1_name:
