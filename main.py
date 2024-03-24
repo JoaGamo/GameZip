@@ -4,20 +4,25 @@ import requests
 import re
 import subprocess
 import logging
+import json
+
 from shutil import which
 from dotenv import load_dotenv
-import IGDBWrapper
-
+from igdb.wrapper import IGDBWrapper
+from igdb.igdbapi_pb2 import GameResult
 # env
 load_dotenv()
-API = os.getenv("API")
+#API = os.getenv("API") Deprecated.
 categoryName = os.getenv("categoryName")
 logFileLocation = os.getenv("logFileLocation")
 multithread = os.getenv("multithread")
 #compressionCMD = os.getenv("compressionCMD") Deprecated.
 storeFolder = os.getenv("storeFolder")
 
-
+# IGDB Stuff
+client_id = os.getenv("client_id")
+client_secret = os.getenv("client_secret")
+# Media stuff
 media1_name = os.getenv("media1_name")
 media2_name = os.getenv("media2_name")
 media3_name = os.getenv("media3_name")
@@ -25,15 +30,10 @@ media1_location = os.getenv("media1_location")
 media2_location = os.getenv("media2_location")
 media3_location = os.getenv("media3_location")
 
-
-
 if which("7z") == None:
     compressionCMD = "7zz"
 else:
     compressionCMD = "7z"
-
-
-# IGDB stuff
 
 
 logging.basicConfig(filename=f"{logFileLocation}", format='%(asctime)s %(message)s', filemode='a')
@@ -43,7 +43,6 @@ logger.setLevel(logging.INFO)
 
 def hardlink_files(folder_path, final_path):
     # By limitations of "ln" for folders, I decided to use 'cp -l' parameter to create hard links
-    # for all files recursively
     subprocess.run(f"cp -lr \'{folder_path}\' {final_path}", shell=True)
 
 
@@ -58,30 +57,37 @@ def fix_filename(file):
     return file
 
 
+
 def fetch_game_name(folder_path):
-    rawg_url = "https://api.rawg.io/api/games"
     folder_name = fix_filename(folder_path)
     folder_name = os.path.basename(folder_name)
     folder_name = scrub_filename(folder_name)
 
-    # API request
-    params = {"key": API, "search": folder_name}
-    response = requests.get(rawg_url, params=params)
+    r = requests.post(f"https://id.twitch.tv/oauth2/token?client_id={client_id}&client_secret={client_secret}&grant_type=client_credentials")
+    access_token = json.loads(r._content)['access_token']
+    # DEBUG
+    print(f"Lo que se va a buscar {folder_name}")
 
-    if response.status_code == 200:
-        data = response.json()
-        if data['results']:
-            game_info = data['results'][0]
-            juego = game_info["name"]
-            logger.debug(f"game detected was {juego}")
-            juego = scrub_filename(juego)
-            logger.debug(f"after filename scrub: {juego}")
+    result_message = IGDBWrapper(client_id, access_token).api_request('games.pb',f'search "{folder_name}"; fields name, first_release_date; limit 1;')
+    result = GameResult()
+    result.ParseFromString(result_message)
+    print (result.games)
+    try:
+        game_info = result.games[0]
+        print(game_info) # Debug
+    except: return "NOTFOUND"
 
-            global releaseDate  # Game's release date
-            releaseDate = game_info.get("released", "")[:4]
-    else:
-        juego = None
+    print(game_info)
+
+"""
+    juego = game_info.get("name")
+    logger.debug(f"game detected was {juego}")
+    global releaseDate
+    releaseDate = game_info.get("first_release_date", "")[:4]
+    # DEBUG
+    print(f"Fecha obtenida {releaseDate}")
     return juego
+"""
 
 
 
