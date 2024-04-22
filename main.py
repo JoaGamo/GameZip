@@ -117,7 +117,7 @@ def main():
         game_name = fetch_game_name(folderPath)
         logger.info(f"Starting to compress {folderPath}")
         compression(folderPath, game_name)
-        logger.info(f"Compressed {game_name} into {folderPath}")
+        logger.info(f"Compressed {game_name} from {folderPath}")
 
     # This is why the script asks for a category.
     # You may want to use this script alongside your other contents to hardlink them.
