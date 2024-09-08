@@ -15,9 +15,6 @@ from igdb.igdbapi_pb2 import GameResult
 
 def load_config():
     load_dotenv()
-    # media_names = os.getenv("media_names").split(",")
-    # media_locations = os.getenv("media_locations").split(",")
-
     media_names = os.getenv("media_names", "").split(",") if os.getenv("media_names") else []
     media_locations = os.getenv("media_locations", "").split(",") if os.getenv("media_locations") else []
 
@@ -26,7 +23,6 @@ def load_config():
             "Mismatch between media_names and media_locations lengths. Ensure both lists are of the same length.")
 
     media_dict = dict(zip(media_names, media_locations))
-
     config = {
         "rawg_API": os.getenv("API"),
         "category_name": os.getenv("categoryName"),
@@ -148,12 +144,13 @@ def main():
     folder_path = args.input
 
     if args.category == config["category_name"]:
-        game_name = args.name
-        if args.name is None:
+        if args.name:
+            game_name = args.name
+        else:
             game_name = fetch_game_name(folder_path, config)
-        logger.info(f"Starting to compress source directory {folder_path} into {config["storeFolder"]}")
+        logger.info(f"Starting to compress source directory {folder_path} into {config['storeFolder']}")
         compression(folder_path, game_name, config)
-        logger.info(f"Compressed {game_name} from source directory {folder_path} into {config["storeFolder"]}")
+        logger.info(f"Compressed {game_name} from source directory {folder_path} into {config['storeFolder']}")
         exit()
 
     # This is why the script asks for a category.
