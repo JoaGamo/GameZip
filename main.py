@@ -167,13 +167,16 @@ def extract_rar(rar_path, extract_path, config):
         #else:
             #rf.extractall(path=extract_path)
         command.extend([rar_path, extract_path])
-        result = subprocess.run(command, capture_output=True, text=True, check=True)
-        if "All OK" in result.stdout:
-            logger.info(f"Successfully extracted RAR file: {rar_path}")
-            return True
-        else:
-            logger.warning(f"Extraction of {rar_path} may have had issues. Output: {result.stdout}")
-            return False
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=True)
+            if "All OK" in result.stdout:
+                logger.info(f"Successfully extracted RAR file: {rar_path}")
+                return True
+        except subprocess.CalledProcessError as e:
+            print("Failed to extract RAR file, check your logs for more info")
+            logger.error(f"Failed to extract RAR file: {rar_path}. Error: {e}")
+            logger.error(f"Extraction of {rar_path} may have had issues. Output: {e.output}")
+            raise
 
 
 def handle_rar_file(folder_path, game_name, config):

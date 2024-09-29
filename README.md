@@ -10,7 +10,7 @@ GameZip is designed to be triggered by a torrent client upon torrent completion 
 # Configuration
 > [!NOTE]
 > Install the required packages using `pip install -r requirements.txt`. 
-> Additionally, 7z (for handling file compression) is required on your system. For Debian systems, use `apt install p7zip`. Also make sure you have unrar installed if you are dealing with RAR files. Do `apt install unrar-free` for it.
+> Additionally, 7z (for handling file compression) is required on your system. For Debian systems, use `apt install p7zip`. If you are dealing with RAR files, install unrar (non-free package). Edit apt-sources to include non-free repositories, then `apt install unrar`. Note: Unlocking encrypted RAR files is not supported in unrar-free, in case you install it.
 
 > [!IMPORTANT]
 > In the latest update, IGDB support has been added as an alternative to RAWG. 
