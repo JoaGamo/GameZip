@@ -9,10 +9,9 @@ import datetime
 import rarfile
 import uuid 
 import shutil
-import time
 # Linux Requisites: 7z and unrar-free package
 
-from shutil import which, move
+from shutil import which
 from dotenv import load_dotenv
 from igdb.wrapper import IGDBWrapper
 from igdb.igdbapi_pb2 import GameResult
@@ -162,16 +161,12 @@ def extract_rar(rar_path, extract_path, config):
             if not password:
                 raise ValueError(f"Failed to unlock RAR file: {rar_path}")
             command.extend([f'-p{password}'])
-            #rf.extractall(path=extract_path, pwd=password)
 
-        #else:
-            #rf.extractall(path=extract_path)
         command.extend([rar_path, extract_path])
         try:
-            result = subprocess.run(command, capture_output=True, text=True, check=True)
-            if "All OK" in result.stdout:
-                logger.info(f"Successfully extracted RAR file: {rar_path}")
-                return True
+            subprocess.run(command, capture_output=True, text=True, check=True)
+            logger.info(f"Successfully extracted RAR file: {rar_path}")
+            return True
         except subprocess.CalledProcessError as e:
             print("Failed to extract RAR file, check your logs for more info")
             logger.error(f"Failed to extract RAR file: {rar_path}. Error: {e}")
@@ -201,11 +196,10 @@ def handle_rar_file(folder_path, game_name, config):
                 else:
                     shutil.copy2(s, d)
             logger.info(f"Moved extracted contents to {folder_path}")
-            logger.info("Cleaning up RAR file")
 
             # Obtain the first directory inside the folder_path
             shutil.rmtree(extract_dir, ignore_errors=True)
-            time.sleep(1)
+
             directories = [d for d in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, d))]
             if len(directories) == 1:
                 first_directory = directories[0]
@@ -223,6 +217,7 @@ def handle_rar_file(folder_path, game_name, config):
     finally:
         # Clean up: remove the temporary extraction directory
         shutil.rmtree(extract_dir, ignore_errors=True)
+        logger.info("Cleaning up RAR file")
         os.remove(rar_file)
 
 
