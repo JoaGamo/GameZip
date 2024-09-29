@@ -6,8 +6,13 @@ import subprocess
 import logging
 import json
 import datetime
+import rarfile
+import uuid 
+import shutil
+import time
+# Linux Requisites: 7z and unrar-free package
 
-from shutil import which
+from shutil import which, move
 from dotenv import load_dotenv
 from igdb.wrapper import IGDBWrapper
 from igdb.igdbapi_pb2 import GameResult
@@ -27,7 +32,7 @@ def load_config():
         "rawg_API": os.getenv("API"),
         "category_name": os.getenv("categoryName"),
         "logFileLocation": os.getenv("logFileLocation"),
-        "releaseDate": 2000,
+        "releaseDate": 2020,
         "multithread": os.getenv("multithread"),
         "storeFolder": os.getenv("storeFolder"),
         "igdb": {
@@ -38,7 +43,8 @@ def load_config():
             "media_names": media_names,
             "media_locations": media_locations
         },
-        "compressionCMD": "7zz" if which("7z") is None else "7z"
+        "compressionCMD": "7zz" if which("7z") is None else "7z",
+        "password_list": os.getenv("password_list", "").split(",")
     }
     return config, media_dict
 
@@ -116,6 +122,108 @@ def fetch_game_name(folder_path, config):
     return game
 
 
+def find_rar_file(folder_path):
+    rar_files = [f for f in os.listdir(folder_path) if f.endswith('.rar')]
+    if rar_files:
+        return os.path.join(folder_path, rar_files[0])
+    return None
+
+
+def try_unlock_rar(rar_file, password_list):
+    for password in password_list:
+        logger.debug(f"Trying password: {password}")
+        try:
+            with rarfile.RarFile(rar_file, 'r') as rf:
+                logger.debug(f"Attempting to list contents with password: {password}")
+                rf.setpassword(password)
+
+                if len(rf.namelist()) == 0:
+                    raise rarfile.RarWrongPassword("Wrong password")
+                logger.debug(f"Successfully unlocked RAR with password: {password}")
+                return password
+        except rarfile.BadRarFile:
+            logger.error(f"File {rar_file} is corrupted")  
+            raise
+        except (rarfile.PasswordRequired, rarfile.RarWrongPassword):
+            logger.debug(f"Password {password} is incorrect")
+            continue
+            
+    logger.warning("Failed to unlock RAR with any provided password")
+    return None 
+
+
+def extract_rar(rar_path, extract_path, config):
+    # Build the unrar command
+    command = ['unrar', 'x', '-y']
+    password = None
+    with rarfile.RarFile(rar_path, 'r') as rf:
+        if rf.needs_password():
+            password = try_unlock_rar(rar_path, config["password_list"])
+            if not password:
+                raise ValueError(f"Failed to unlock RAR file: {rar_path}")
+            command.extend([f'-p{password}'])
+            #rf.extractall(path=extract_path, pwd=password)
+
+        #else:
+            #rf.extractall(path=extract_path)
+        command.extend([rar_path, extract_path])
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        if "All OK" in result.stdout:
+            logger.info(f"Successfully extracted RAR file: {rar_path}")
+            return True
+        else:
+            logger.warning(f"Extraction of {rar_path} may have had issues. Output: {result.stdout}")
+            return False
+
+
+def handle_rar_file(folder_path, game_name, config):
+    rar_file = find_rar_file(folder_path)
+    if not rar_file:
+        logger.info(f"No RAR file found in {folder_path}. Proceeding with normal compression.")
+        return False, None  
+
+    # Create a unique subdirectory for extraction
+    extract_dir = os.path.join(folder_path, f"temp_extract_{uuid.uuid4().hex}")
+    os.makedirs(extract_dir, exist_ok=True)
+
+    try:
+        if extract_rar(rar_file, extract_dir, config):
+            logger.info(f"Successfully extracted RAR file: {rar_file}")
+            # Move extracted contents to the original folder
+            for item in os.listdir(extract_dir):
+                s = os.path.join(extract_dir, item)
+                d = os.path.join(folder_path, item)
+                if os.path.isdir(s):
+                    shutil.copytree(s, d, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(s, d)
+            logger.info(f"Moved extracted contents to {folder_path}")
+            logger.info("Cleaning up RAR file")
+
+            # Obtain the first directory inside the folder_path
+            shutil.rmtree(extract_dir, ignore_errors=True)
+            time.sleep(1)
+            directories = [d for d in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, d))]
+            if len(directories) == 1:
+                first_directory = directories[0]
+                logger.info(f"First directory inside {folder_path} is {first_directory}")
+                return True, first_directory
+            elif len(directories) > 1:
+                logger.warning(f"More than one directory found inside {folder_path}. Returning the original folder path.")
+                return True, folder_path
+            else:
+                logger.error(f"No directories found inside {folder_path}")
+                return False, None
+        else:
+            logger.error(f"Failed to extract RAR file: {rar_file}")
+            return False, None
+    finally:
+        # Clean up: remove the temporary extraction directory
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        os.remove(rar_file)
+
+
+
 def compression(folder_path, game_name, config):
     store_folder = config["storeFolder"]
     multithread = config["multithread"]
@@ -142,15 +250,34 @@ def main():
     args = parser.parse_args()
     load_logger(config, args.debug)
     folder_path = args.input
+    logger.debug (f"Loaded passwords: {config['password_list']}")
 
     if args.category == config["category_name"]:
         if args.name:
             game_name = args.name
         else:
             game_name = fetch_game_name(folder_path, config)
-        logger.info(f"Starting to compress source directory {folder_path} into {config['storeFolder']}")
-        compression(folder_path, game_name, config)
-        logger.info(f"Compressed {game_name} from source directory {folder_path} into {config['storeFolder']}")
+        
+        try:
+            success, root_folder = handle_rar_file(folder_path, game_name, config)
+            if success:
+                if root_folder == folder_path:
+                    logger.info(f"Starting to compress extracted contents from {folder_path} into {config['storeFolder']}")
+                    compression(folder_path, game_name, config)
+                    logger.info(f"Compressed {game_name} from source directory {folder_path} into {config['storeFolder']}")
+                elif root_folder:
+                    compression_path = os.path.join(folder_path, root_folder, '')
+                    logger.info(f"Starting to compress extracted contents from {compression_path} into {config['storeFolder']}")
+                    compression(compression_path, game_name, config)
+                    logger.info(f"Compressed {game_name} from source directory {compression_path} into {config['storeFolder']}")
+            else:
+                logger.info(f"No RAR handling needed. Starting to compress source directory {folder_path} into {config['storeFolder']}")
+                compression(folder_path, game_name, config)
+                logger.info(f"Compressed {game_name} from source directory {folder_path} into {config['storeFolder']}")
+        except ValueError as e:
+            logger.error(f"RAR extraction failed. Compression aborted. Error: {str(e)}")
+            raise SystemExit(1)
+        
         exit()
 
     # This is why the script asks for a category.

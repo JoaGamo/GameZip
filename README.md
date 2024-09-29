@@ -10,7 +10,7 @@ GameZip is designed to be triggered by a torrent client upon torrent completion 
 # Configuration
 > [!NOTE]
 > Install the required packages using `pip install -r requirements.txt`. 
-> Additionally, 7z (for handling file compression) is required on your system. For Debian systems, use `apt install p7zip`, or install p7zip from the AUR on Arch-based systems.
+> Additionally, 7z (for handling file compression) is required on your system. For Debian systems, use `apt install p7zip`. Also make sure you have unrar installed if you are dealing with RAR files. Do `apt install unrar-free` for it.
 
 > [!IMPORTANT]
 > In the latest update, IGDB support has been added as an alternative to RAWG. 
@@ -49,12 +49,9 @@ python3 main.py -c Games /mnt/gaming/WarNe2/ -n "Warmachine 99k Sea Marine 2"
 python3 main.py -c Games "/SquareRoot\ Collection\ \[Testing\ Repack\]/"
 ```
 
-#### Example Qbittorrent "Run on Completion" Command
+## Example Qbittorrent "Run on Completion" Command
 ```bash
 /usr/bin/ssh -i /home/qbittorrent-nox/.ssh/id_rsa root@192.168.0.11 python3 /root/GameZip/main.py -c %L '"%R"'
 ```
-This command, which is the one I use myself, executes the script on a more powerful server via SSH, rather than on the NAS.
+This example command executes the script on a more powerful server via SSH, rather than on your NAS :)
 
-# TODO:
-- If the "source directory" is a compressed `.zip` file and is password-protected, the script should attempt to remove the password using a user-provided list of common passwords. Once the password is removed, the file should be recompressed as normal.
-  
