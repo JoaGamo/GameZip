@@ -164,7 +164,7 @@ def extract_rar(rar_path, extract_path, config):
 
         command.extend([rar_path, extract_path])
         try:
-            subprocess.run(command, capture_output=True, text=True, check=True)
+            subprocess.run(command, capture_output=True, text=True, check=False)
             logger.info(f"Successfully extracted RAR file: {rar_path}")
             return True
         except subprocess.CalledProcessError as e:
