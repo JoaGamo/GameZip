@@ -9,7 +9,6 @@ import datetime
 import rarfile
 import uuid 
 import shutil
-# Linux Requisites: 7z and unrar-free package
 
 from shutil import which
 from dotenv import load_dotenv
@@ -121,11 +120,97 @@ def fetch_game_name(folder_path, config):
     return game
 
 
-def find_rar_file(folder_path):
-    rar_files = [f for f in os.listdir(folder_path) if f.endswith('.rar')]
-    if rar_files:
-        return os.path.join(folder_path, rar_files[0])
-    return None
+def find_rar_files(folder_path):
+    """
+    Find all RAR files in the folder, including split volumes.
+    Returns the main RAR file and a list of all related volumes.
+    Handles extended sequences: .rar, .r00-.r99, .s00-.s99, .t00-.t99, etc.
+    """
+    all_files = os.listdir(folder_path)
+    
+    main_rar = None
+    rar_files = []
+    
+    # Function to check if a file is a RAR part file
+    def is_rar_part(filename):
+        return bool(re.match(r'.*\.[r-z]\d{2}$', filename, re.IGNORECASE))
+    
+    # Function to check if a file is a numbered part file
+    def is_part_numbered(filename):
+        return bool(re.match(r'.*\.part\d+\.rar$', filename, re.IGNORECASE))
+    
+    # First, try to find the main RAR file
+    for file in all_files:
+        # Skip part files when looking for main RAR
+        if is_rar_part(file) or is_part_numbered(file):
+            continue
+            
+        if file.lower().endswith('.rar'):
+            main_rar = os.path.join(folder_path, file)
+            break
+    
+    # If no main RAR found, check if we have split files
+    if not main_rar:
+        # Look for any file with .r00 through .z99 extension
+        r_files = [f for f in all_files if is_rar_part(f)]
+        if r_files:
+            # For this format, the main file should be .rar
+            base_name = re.sub(r'\.[r-z]\d{2}$', '', r_files[0], flags=re.IGNORECASE)
+            potential_main = f"{base_name}.rar"
+            if potential_main in all_files:
+                main_rar = os.path.join(folder_path, potential_main)
+    
+    if not main_rar:
+        return None, []
+    
+    # Get the base name without extension
+    main_base = re.sub(r'\.rar$', '', os.path.basename(main_rar))
+    
+    # Now collect all related RAR parts
+    for file in all_files:
+        full_path = os.path.join(folder_path, file)
+        
+        # Skip the main RAR file as we already have it
+        if full_path == main_rar:
+            continue
+            
+        # Check if this file belongs to the same RAR set
+        if is_rar_part(file) or is_part_numbered(file) or file.lower().endswith('.rar'):
+            # Get the base name of this file
+            if is_rar_part(file):
+                file_base = re.sub(r'\.[r-z]\d{2}$', '', file)
+            elif is_part_numbered(file):
+                file_base = re.sub(r'\.part\d+\.rar$', '', file)
+            else:
+                file_base = re.sub(r'\.rar$', '', file)
+                
+            # If the base names match, this is part of our RAR set
+            if file_base.lower() == main_base.lower():
+                rar_files.append(full_path)
+    
+    logger.debug(f"Found main RAR: {main_rar}")
+    logger.debug(f"Found RAR parts: {rar_files}")
+    
+    # Sort the RAR files to ensure proper order
+    def rar_sort_key(path):
+        filename = os.path.basename(path).lower()
+        if '.part' in filename:
+            match = re.search(r'\.part(\d+)\.rar$', filename)
+            return (1, int(match.group(1)) if match else 0)
+        elif re.match(r'.*\.[r-z]\d{2}$', filename):
+            match = re.search(r'\.([r-z])(\d{2})$', filename)
+            if match:
+                letter, number = match.groups()
+                letter_value = (ord(letter.lower()) - ord('r')) * 100
+                return (2, letter_value + int(number))
+        return (0, 0)  # Main .rar file comes first
+    
+    rar_files = sorted(rar_files, key=rar_sort_key)
+    
+    # Add main RAR to the beginning of the list
+    all_rar_files = [main_rar] + rar_files
+    
+    return main_rar, all_rar_files
 
 
 def try_unlock_rar(rar_file, password_list):
@@ -152,41 +237,65 @@ def try_unlock_rar(rar_file, password_list):
 
 
 def extract_rar(rar_path, extract_path, config):
-    # Build the unrar command
+    """
+    Extract RAR file to the specified path.
+    Returns True if extraction was successful, False otherwise.
+    """
     command = ['unrar', 'x', '-y']
     password = None
-    with rarfile.RarFile(rar_path, 'r') as rf:
-        if rf.needs_password():
-            password = try_unlock_rar(rar_path, config["password_list"])
-            if not password:
-                raise ValueError(f"Failed to unlock RAR file: {rar_path}")
-            command.extend([f'-p{password}'])
-
+    
+    try:
+        with rarfile.RarFile(rar_path, 'r') as rf:
+            if rf.needs_password():
+                password = try_unlock_rar(rar_path, config["password_list"])
+                if not password:
+                    raise ValueError(f"Failed to unlock RAR file: {rar_path}")
+                command.extend([f'-p{password}'])
+        
         command.extend([rar_path, extract_path])
-        try:
-            subprocess.run(command, capture_output=True, text=True, check=False)
-            logger.info(f"Successfully extracted RAR file: {rar_path}")
-            return True
-        except subprocess.CalledProcessError as e:
-            print("Failed to extract RAR file, check your logs for more info")
-            logger.error(f"Failed to extract RAR file: {rar_path}. Error: {e}")
-            logger.error(f"Extraction of {rar_path} may have had issues. Output: {e.output}")
-            raise
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        
+        if result.returncode != 0:
+            error_msg = result.stderr.strip()
+            if "is not RAR archive" not in error_msg:  # Ignore expected errors for split archives
+                logger.warning(f"Extraction warning: {error_msg}")
+        
+        # Verify extraction success by checking if files were created
+        if not os.listdir(extract_path):
+            raise subprocess.CalledProcessError(1, command, "Extraction failed - no files extracted")
+        
+        logger.info(f"Successfully extracted RAR file: {rar_path}")
+        return True
+        
+    except subprocess.CalledProcessError as e:
+        print("Failed to extract RAR file, check your logs for more info")
+        logger.error(f"Failed to extract RAR file: {rar_path}. Error: {e}")
+        logger.error(f"Extraction of {rar_path} may have had issues. Output: {e.output}")
+        raise
 
 
 def handle_rar_file(folder_path, game_name, config):
-    rar_file = find_rar_file(folder_path)
-    if not rar_file:
-        logger.info(f"No RAR file found in {folder_path}. Proceeding with normal compression.")
-        return False, None  
+    """
+    Handle RAR file extraction and cleanup.
+    Returns (success, root_folder) tuple.
+    """
+    main_rar, rar_files = find_rar_files(folder_path)
+    if not main_rar:
+        logger.info(f"No RAR files found in {folder_path}. Proceeding with normal compression.")
+        return False, None
 
     # Create a unique subdirectory for extraction
-    extract_dir = os.path.join(folder_path, f"temp_extract_{uuid.uuid4().hex}")
+    temp_dir_name = f"temp_extract_{uuid.uuid4().hex}"
+    extract_dir = os.path.join(folder_path, temp_dir_name)
     os.makedirs(extract_dir, exist_ok=True)
+    
+    extraction_successful = False
+    root_folder = None
 
     try:
-        if extract_rar(rar_file, extract_dir, config):
-            logger.info(f"Successfully extracted RAR file: {rar_file}")
+        if extract_rar(main_rar, extract_dir, config):
+            logger.info(f"Successfully extracted RAR file: {main_rar}")
+            
             # Move extracted contents to the original folder
             for item in os.listdir(extract_dir):
                 s = os.path.join(extract_dir, item)
@@ -196,29 +305,46 @@ def handle_rar_file(folder_path, game_name, config):
                 else:
                     shutil.copy2(s, d)
             logger.info(f"Moved extracted contents to {folder_path}")
-
-            # Obtain the first directory inside the folder_path
-            shutil.rmtree(extract_dir, ignore_errors=True)
-
-            directories = [d for d in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, d))]
+            
+            extraction_successful = True
+            
+            # Clean up RAR files only after successful extraction and copying
+            for rar_file in rar_files:
+                try:
+                    os.remove(rar_file)
+                    logger.debug(f"Removed RAR file: {rar_file}")
+                except OSError as e:
+                    logger.warning(f"Failed to remove RAR file {rar_file}: {e}")
+            
+            # Determine the root folder for compression
+            # Explicitly exclude the temporary directory from the search
+            directories = [d for d in os.listdir(folder_path) 
+                         if os.path.isdir(os.path.join(folder_path, d)) 
+                         and d != temp_dir_name]
+            
             if len(directories) == 1:
-                first_directory = directories[0]
-                logger.info(f"First directory inside {folder_path} is {first_directory}")
-                return True, first_directory
+                root_folder = directories[0]
+                logger.info(f"First directory inside {folder_path} is {root_folder}")
             elif len(directories) > 1:
-                logger.warning(f"More than one directory found inside {folder_path}. Returning the original folder path.")
-                return True, folder_path
+                logger.warning(f"Multiple directories found inside {folder_path}. Using original folder path.")
+                root_folder = os.path.basename(folder_path)
             else:
-                logger.error(f"No directories found inside {folder_path}")
-                return False, None
-        else:
-            logger.error(f"Failed to extract RAR file: {rar_file}")
-            return False, None
+                logger.warning(f"No directories found inside {folder_path}. Using original folder path.")
+                root_folder = os.path.basename(folder_path)
+                
+    except Exception as e:
+        logger.error(f"Error during RAR handling: {str(e)}")
+        raise
     finally:
-        # Clean up: remove the temporary extraction directory
-        shutil.rmtree(extract_dir, ignore_errors=True)
-        logger.info("Cleaning up RAR file")
-        os.remove(rar_file)
+        # Clean up temporary extraction directory only if it exists
+        if os.path.exists(extract_dir):
+            try:
+                shutil.rmtree(extract_dir)
+                logger.debug("Cleaned up temporary extraction directory")
+            except OSError as e:
+                logger.warning(f"Failed to clean up temporary directory {extract_dir}: {e}")
+    
+    return extraction_successful, root_folder
 
 
 
@@ -251,29 +377,25 @@ def main():
     logger.debug (f"Loaded passwords: {config['password_list']}")
 
     if args.category == config["category_name"]:
-        if args.name:
-            game_name = args.name
-        else:
-            game_name = fetch_game_name(folder_path, config)
-        
         try:
+            if args.name:
+                game_name = args.name
+            else:
+                game_name = fetch_game_name(folder_path, config)
+            
             success, root_folder = handle_rar_file(folder_path, game_name, config)
             if success:
-                if root_folder == folder_path:
-                    logger.info(f"Starting to compress extracted contents from {folder_path} into {config['storeFolder']}")
-                    compression(folder_path, game_name, config)
-                    logger.info(f"Compressed {game_name} from source directory {folder_path} into {config['storeFolder']}")
-                elif root_folder:
-                    compression_path = os.path.join(folder_path, root_folder, '')
-                    logger.info(f"Starting to compress extracted contents from {compression_path} into {config['storeFolder']}")
-                    compression(compression_path, game_name, config)
-                    logger.info(f"Compressed {game_name} from source directory {compression_path} into {config['storeFolder']}")
+                compression_path = os.path.join(folder_path, root_folder) if root_folder else folder_path
+                logger.info(f"  Starting compression from {compression_path}")
+                compression(compression_path, game_name, config)
+                logger.info(f"Successfully compressed {game_name}")
             else:
-                logger.info(f"No RAR handling needed. Starting to compress source directory {folder_path} into {config['storeFolder']}")
+                logger.info(f"No RAR handling needed. Starting direct compression from {folder_path}")
                 compression(folder_path, game_name, config)
-                logger.info(f"Compressed {game_name} from source directory {folder_path} into {config['storeFolder']}")
-        except ValueError as e:
-            logger.error(f"RAR extraction failed. Compression aborted. Error: {str(e)}")
+                logger.info(f"Successfully compressed {game_name}")
+                
+        except Exception as e:
+            logger.error(f"Error during processing: {str(e)}")
             raise SystemExit(1)
         
         exit()
