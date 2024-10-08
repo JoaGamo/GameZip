@@ -12,15 +12,13 @@ GameZip is designed to be triggered by a torrent client upon torrent completion 
 > Install the required packages using `pip install -r requirements.txt`. 
 > Additionally, 7z (for handling file compression) is required on your system. For Debian systems, use `apt install p7zip`. If you are dealing with RAR files, install unrar (non-free package). Edit apt-sources to include non-free repositories, then `apt install unrar`. Note: Unlocking encrypted RAR files is not supported in unrar-free, in case you install it.
 
-> [!IMPORTANT]
-> In the latest update, IGDB support has been added as an alternative to RAWG. 
-> Using IGDB requires a 5-step setup involving a Twitch account. For more details, read [here](https://api-docs.igdb.com/#getting-started).
-> If you prefer to use IGDB, leave the API= field empty; for RAWG, fill it with your API key.
+> [!WARNING]
+> By design, when handling RAR files, this script will DELETE all RAR files inside the directory to be compressed.
 
 1. **Rename** `.env.example` to `.env` and configure the following fields:
 
     - `multithread`: Set the number of CPU threads for 7z to use during compression.
-    - `API`: Your RAWG API Key.
+    - `API`: Your RAWG API Key. <- Alternatively, set up IGDB instead of this.
     - `categoryName`: The category name for your torrent's games. This ensures the script only compresses game files and not other types of files.
     - `storeFolder`: The directory where the script will store the compressed and renamed versions of the games.
 
