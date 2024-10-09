@@ -160,6 +160,14 @@ def find_rar_files(folder_path):
             if potential_main in all_files:
                 main_rar = os.path.join(folder_path, potential_main)
     
+    # If still no main RAR found, check for numbered part files
+    if not main_rar:
+        part_files = [f for f in all_files if is_part_numbered(f)]
+        if part_files:
+            # Sort part files to ensure the first part is selected as main
+            part_files.sort(key=lambda x: int(re.search(r'\.part(\d+)\.rar$', x).group(1)))
+            main_rar = os.path.join(folder_path, part_files[0])
+
     if not main_rar:
         return None, []
     
@@ -309,7 +317,7 @@ def handle_rar_file(folder_path, game_name, config):
             extraction_successful = True
             
             # Clean up RAR files only after successful extraction and copying
-            for rar_file in rar_files:
+            for rar_file in [main_rar] + rar_files:
                 try:
                     os.remove(rar_file)
                     logger.debug(f"Removed RAR file: {rar_file}")
