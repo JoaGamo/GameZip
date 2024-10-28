@@ -9,6 +9,7 @@ import datetime
 import rarfile
 import uuid 
 import shutil
+import time
 
 from shutil import which
 from dotenv import load_dotenv
@@ -383,6 +384,8 @@ def main():
     load_logger(config, args.debug)
     folder_path = args.input
     logger.debug (f"Loaded passwords: {config['password_list']}")
+    # Sleep 10 seconds, fixes a bug in my CephFS that provoked file corruption.
+    time.sleep(10)
 
     if args.category == config["category_name"]:
         try:
