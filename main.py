@@ -82,41 +82,66 @@ def fetch_game_name(folder_path, config):
 
     folder_name = fix_filename(folder_path)
     folder_name = os.path.basename(folder_name)
+    original_folder_name = folder_name
     folder_name = scrub_filename(folder_name)
     logger.debug(f"Name obtained from directory's name: {folder_name}")
+    game = None
+    
     if rawg_API is not None:
         # RAWG Stuff
         rawg_url = "https://api.rawg.io/api/games"
         params = {"key": rawg_API, "search": folder_name}
-        response = requests.get(rawg_url, params=params)
-        if response.status_code != 200:
-            raise ConnectionError(f"RAWG Status code: {response.status_code}")
-        data = response.json()
-        if data['results'] is None:
-            logging.error(f"Could not find game {folder_name} in RAWG database")
-            raise ValueError(f"Could not find the game {folder_name} in RAWG Database")
-        game_info = data['results'][0]
-        game = game_info["name"]
-        releaseDate = game_info.get("released", "")[:4]
-        logger.debug(f"Name obtained from RAWG's API: {game} releaseDate={releaseDate}")
+        try:
+            response = requests.get(rawg_url, params=params)
+            if response.status_code != 200:
+                raise ConnectionError(f"RAWG Status code: {response.status_code}")
+            data = response.json()
+            
+            # Check if results exist and are not empty
+            if data.get('results') and len(data['results']) > 0:
+                game_info = data['results'][0]
+                game = game_info["name"]
+                releaseDate = game_info.get("released", "")[:4] if game_info.get("released") else str(releaseDate)
+                logger.debug(f"Name obtained from RAWG's API: {game} releaseDate={releaseDate}")
+            else:
+                logger.warning(f"No results found for game '{folder_name}' in RAWG database")
+                
+        except Exception as e:
+            logger.error(f"Error fetching from RAWG API: {str(e)}")
+            
     else:
         # IGDB Stuff
-        r = requests.post(
-            f"https://id.twitch.tv/oauth2/token?client_id={client_id}&client_secret={client_secret}&grant_type=client_credentials")
-        access_token = json.loads(r._content)['access_token']
-        result_message = IGDBWrapper(client_id, access_token).api_request('games.pb',
-                                                                          f'search "{folder_name}"; fields name, first_release_date; limit 1;')
-        result = GameResult()
-        result.ParseFromString(result_message)
-        for game in result.games:
-            if hasattr(game, "name") and hasattr(game, "first_release_date"):
-                game = game.name
-                releaseDate = game.first_release_date.seconds
-                break
-        releaseDate = datetime.datetime.fromtimestamp(releaseDate)
-        releaseDate = releaseDate.year
-        logger.debug(f"Name obtained from IGDB's API: {game} releaseDate={releaseDate}")
-
+        try:
+            r = requests.post(
+                f"https://id.twitch.tv/oauth2/token?client_id={client_id}&client_secret={client_secret}&grant_type=client_credentials")
+            access_token = json.loads(r._content)['access_token']
+            result_message = IGDBWrapper(client_id, access_token).api_request('games.pb',
+                                                                              f'search "{folder_name}"; fields name, first_release_date; limit 1;')
+            result = GameResult()
+            result.ParseFromString(result_message)
+            
+            for game_result in result.games:
+                if hasattr(game_result, "name") and hasattr(game_result, "first_release_date"):
+                    game = game_result.name
+                    releaseDate = game_result.first_release_date.seconds
+                    releaseDate = datetime.datetime.fromtimestamp(releaseDate).year
+                    logger.debug(f"Name obtained from IGDB's API: {game} releaseDate={releaseDate}")
+                    break
+                    
+            if not game:
+                logger.warning(f"No results found for game '{folder_name}' in IGDB database")
+                
+        except Exception as e:
+            logger.error(f"Error fetching from IGDB API: {str(e)}")
+    
+    # Fallback: use original folder name if API search failed
+    if not game:
+        game = original_folder_name
+        logger.warning(f"API search failed. Using original folder name as fallback: {game}")
+        # Set a default release date if we couldn't get one from API
+        releaseDate = config.get("releaseDate", 2020)
+    # Some games have special characters in their names, so we need to scrub them for Windows compatibility.
+    game = scrub_filename(game)
     config["releaseDate"] = releaseDate
     return game
 
