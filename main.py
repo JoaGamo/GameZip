@@ -407,6 +407,8 @@ def main():
                 
         except Exception as e:
             logger.error(f"Error during processing: {str(e)}")
+            logger.error(f"Failed to process {folder_path}")
+            
             raise SystemExit(1)
         
         exit()
