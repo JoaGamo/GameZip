@@ -129,12 +129,10 @@ def fetch_game_name(folder_path, config):
             best_match = None
             for game_result in result.games:
                 if hasattr(game_result, "name"):
-                    # Priorizar coincidencias exactas o muy similares
                     if folder_name.lower() in game_result.name.lower() or game_result.name.lower() in folder_name.lower():
                         best_match = game_result
                         break
             
-            # Si no hay coincidencia parcial, usar el primer resultado (más popular)
             if not best_match and result.games:
                 best_match = result.games[0]
             
