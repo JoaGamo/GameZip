@@ -116,18 +116,35 @@ def fetch_game_name(folder_path, config):
                 f"https://id.twitch.tv/oauth2/token?client_id={client_id}&client_secret={client_secret}&grant_type=client_credentials")
             access_token = json.loads(r._content)['access_token']
             result_message = IGDBWrapper(client_id, access_token).api_request('games.pb',
-                                                                              f'search "{folder_name}"; fields name, first_release_date; limit 1;')
+                f'''
+                search "{folder_name}"; 
+                fields name, first_release_date, alternative_names.name, popularity; 
+                where category = 0 & version_parent = null;
+                sort popularity desc;
+                limit 6;
+                ''')
             result = GameResult()
             result.ParseFromString(result_message)
             
+            best_match = None
             for game_result in result.games:
-                if hasattr(game_result, "name") and hasattr(game_result, "first_release_date"):
-                    game = game_result.name
-                    releaseDate = game_result.first_release_date.seconds
+                if hasattr(game_result, "name"):
+                    # Priorizar coincidencias exactas o muy similares
+                    if folder_name.lower() in game_result.name.lower() or game_result.name.lower() in folder_name.lower():
+                        best_match = game_result
+                        break
+            
+            # Si no hay coincidencia parcial, usar el primer resultado (más popular)
+            if not best_match and result.games:
+                best_match = result.games[0]
+            
+            if best_match:
+                game = best_match.name
+                releaseDate = best_match.first_release_date.seconds if hasattr(best_match, "first_release_date") else None
+                if releaseDate:
                     releaseDate = datetime.datetime.fromtimestamp(releaseDate).year
-                    logger.debug(f"Name obtained from IGDB's API: {game} releaseDate={releaseDate}")
-                    break
-                    
+                logger.debug(f"Name obtained from IGDB's API: {game} releaseDate={releaseDate}")
+
             if not game:
                 logger.warning(f"No results found for game '{folder_name}' in IGDB database")
                 
