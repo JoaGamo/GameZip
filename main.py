@@ -114,15 +114,17 @@ def fetch_game_name(folder_path, config):
         try:
             r = requests.post(
                 f"https://id.twitch.tv/oauth2/token?client_id={client_id}&client_secret={client_secret}&grant_type=client_credentials")
-            access_token = json.loads(r._content)['access_token']
-            result_message = IGDBWrapper(client_id, access_token).api_request('games.pb',
-                f'''
+            if r.status_code != 200:
+                raise ConnectionError(f"Token request failed with status {r.status_code}")
+            access_token = json.loads(r.content)['access_token']
+            query =f'''
                 search "{folder_name}"; 
-                fields name, first_release_date, alternative_names.name, popularity; 
-                where category = 0 & version_parent = null;
+                fields name,first_release_date,alternative_names.name,popularity; 
+                where category = (0,4) & version_parent = null;
                 sort popularity desc;
                 limit 6;
-                ''')
+                '''
+            result_message = IGDBWrapper(client_id, access_token).api_request('games.pb', query)
             result = GameResult()
             result.ParseFromString(result_message)
             
@@ -148,6 +150,8 @@ def fetch_game_name(folder_path, config):
                 
         except Exception as e:
             logger.error(f"Error fetching from IGDB API: {str(e)}")
+            logger.debug(f"Query used: {query if 'query' in locals() else 'Query not defined'}")
+            logger.debug(f"Folder name searched: {folder_name}")
     
     # Fallback: use original folder name if API search failed
     if not game:
