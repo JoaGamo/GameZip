@@ -13,8 +13,6 @@ import time
 
 from shutil import which
 from dotenv import load_dotenv
-from igdb.wrapper import IGDBWrapper
-from igdb.igdbapi_pb2 import GameResult
 
 
 def load_config():
@@ -117,33 +115,38 @@ def fetch_game_name(folder_path, config):
             if r.status_code != 200:
                 raise ConnectionError(f"Token request failed with status {r.status_code}")
             access_token = json.loads(r.content)['access_token']
-            query =f'''
-                search "{folder_name}"; 
-                fields name,first_release_date,alternative_names.name,popularity; 
-                where category = (0,4) & version_parent = null;
-                sort popularity desc;
-                limit 6;
+            headers = {
+                'Client-ID': client_id,
+                'Authorization': f'Bearer {access_token}',
+                'Accept': 'application/json'
+            }
+            query = f'''search "{folder_name}"; 
+                fields name,first_release_date,alternative_names.name;                 
+                where game_type = (0, 4) & version_parent = null;
+                limit 10;
                 '''
-            result_message = IGDBWrapper(client_id, access_token).api_request('games.pb', query)
-            result = GameResult()
-            result.ParseFromString(result_message)
+                
+            res = requests.post('https://api.igdb.com/v4/games', headers=headers, data=query)
+            res.raise_for_status()
+            games = res.json()
+            logger.debug(games)
             
             best_match = None
-            for game_result in result.games:
-                if hasattr(game_result, "name"):
-                    if folder_name.lower() in game_result.name.lower() or game_result.name.lower() in folder_name.lower():
+            for game_result in games:
+                if 'name' in game_result:
+                    if folder_name.lower() in game_result['name'].lower() or game_result['name'].lower() in folder_name.lower():
                         best_match = game_result
                         break
             
-            if not best_match and result.games:
-                best_match = result.games[0]
+            if not best_match and games:
+                best_match = games[0]
             
             if best_match:
-                game = best_match.name
-                releaseDate = best_match.first_release_date.seconds if hasattr(best_match, "first_release_date") else None
+                game = best_match['name']
+                releaseDate = best_match['first_release_date'] if 'first_release_date' in best_match else None
                 if releaseDate:
                     releaseDate = datetime.datetime.fromtimestamp(releaseDate).year
-                logger.debug(f"Name obtained from IGDB's API: {game} releaseDate={releaseDate}")
+                logger.info(f"Name obtained from IGDB's API: {game} releaseDate={releaseDate}")
 
             if not game:
                 logger.warning(f"No results found for game '{folder_name}' in IGDB database")
