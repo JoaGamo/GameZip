@@ -1,5 +1,4 @@
 requests
 python-dotenv
-igdb-api-v4
 rarfile
 cryptography
