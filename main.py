@@ -17,14 +17,6 @@ from dotenv import load_dotenv
 
 def load_config():
     load_dotenv()
-    media_names = os.getenv("media_names", "").split(",") if os.getenv("media_names") else []
-    media_locations = os.getenv("media_locations", "").split(",") if os.getenv("media_locations") else []
-
-    if len(media_names) != len(media_locations):
-        logger.warning(
-            "Mismatch between media_names and media_locations lengths. Ensure both lists are of the same length.")
-
-    media_dict = dict(zip(media_names, media_locations))
     config = {
         "rawg_API": os.getenv("API"),
         "category_name": os.getenv("categoryName"),
@@ -36,14 +28,10 @@ def load_config():
             "client_id": os.getenv("client_id"),
             "client_secret": os.getenv("client_secret")
         },
-        "media": {
-            "media_names": media_names,
-            "media_locations": media_locations
-        },
         "compressionCMD": "7zz" if which("7z") is None else "7z",
         "password_list": os.getenv("password_list", "").split(",")
     }
-    return config, media_dict
+    return config
 
 
 def load_logger(config, debug_mode):
@@ -53,13 +41,6 @@ def load_logger(config, debug_mode):
     logger.setLevel(logging.INFO)
     if debug_mode:
         logger.setLevel(logging.DEBUG)
-
-
-def hardlink_files(folder_path, final_path):
-    # By limitations of "ln" for folders, I decided to use 'cp -l' parameter to create hard links
-    subprocess.run(f"cp -lr \'{folder_path}\' {final_path}", shell=True)
-    logger.debug(f"Successfully hard-linked file from source directory {folder_path} to target path {final_path}")
-
 
 def scrub_filename(name):
     # Remove special characters and stuff between [brackets] from the name, so we can search our game's API easily.
@@ -421,7 +402,7 @@ def compression(folder_path, game_name, config):
 
 
 def main():
-    config, media_dict = load_config()
+    config = load_config()
     parser = argparse.ArgumentParser()
     parser.add_argument("input", help="Input file")
     parser.add_argument("-c", "--category", action="store", help="Torrent category")
@@ -430,8 +411,8 @@ def main():
     args = parser.parse_args()
     load_logger(config, args.debug)
     folder_path = args.input
-    logger.debug (f"Loaded passwords: {config['password_list']}")
-    # Sleep 10 seconds, fixes a bug in my CephFS that provoked file corruption.
+    logger.debug(f"Loaded passwords: {config['password_list']}")
+    # This simple 10s fixes an unknown bug in my setup that caused file corruption
     time.sleep(10)
 
     if args.category == config["category_name"]:
@@ -458,17 +439,6 @@ def main():
             
             raise SystemExit(1)
         
-        exit()
-
-    # This is why the script asks for a category.
-    # You may want to use this script alongside your other contents to hardlink them.
-    if args.category in config["media"]['media_names']:
-        location = media_dict.get(args.category, None)
-        if location:
-            logger.info(f"Hardlinking {args.category} {folder_path} to {location}")
-            hardlink_files(folder_path, location)
-        else:
-            logger.error(f"Location not found for category: {args.category}")
     else:
         logger.error(f"Unknown category: {args.category}")
 
