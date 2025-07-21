@@ -18,7 +18,6 @@ from dotenv import load_dotenv
 def load_config():
     load_dotenv()
     config = {
-        "rawg_API": os.getenv("API"),
         "category_name": os.getenv("categoryName"),
         "logFileLocation": os.getenv("logFileLocation"),
         "releaseDate": 2020,
@@ -29,7 +28,14 @@ def load_config():
             "client_secret": os.getenv("client_secret")
         },
         "compressionCMD": "7zz" if which("7z") is None else "7z",
-        "password_list": os.getenv("password_list", "").split(",")
+        "password_list": os.getenv("password_list", "").split(","),
+        
+        # Popularity filter settings - only check how many ratings/reviews a game has
+        "enable_popularity_filter": os.getenv("ENABLE_POPULARITY_FILTER", "false").lower() == "true",
+        "skip_unknown_games": os.getenv("SKIP_UNKNOWN_GAMES", "false").lower() == "true",
+        "popularity_filters": {
+            "min_igdb_rating_count": int(os.getenv("MIN_IGDB_RATING_COUNT", "100")),
+        }
     }
     return config
 
@@ -53,12 +59,79 @@ def fix_filename(file):
     return file
 
 
+def find_best_match(games, search_name):
+    """
+    Find the best matching game from a list of games based on name similarity.
+    Returns the best matching game or None if no matches found.
+    """
+    def calculate_match_score(game_name, search_name):
+        """Calculate how well a game name matches the search term"""
+        game_lower = game_name.lower()
+        search_lower = search_name.lower()
+        
+        if game_lower == search_lower:
+            return 1000
+        
+        if game_lower.startswith(search_lower):
+            return 800
+        
+        if search_lower.startswith(game_lower):
+            return 700
+        
+        # Game name contains search term as whole word
+        if f" {search_lower} " in f" {game_lower} ":
+            return 600
+        
+        # Search term contains game name as whole word
+        if f" {game_lower} " in f" {search_lower} ":
+            return 500
+        
+        if search_lower in game_lower:
+            return 300
+        
+        if game_lower in search_lower:
+            return 200
+        
+        # No match
+        return 0
+    
+    best_match = None
+    best_score = -1
+    
+    # Find the best match based on name similarity first, then popularity
+    for game_result in games:
+        if 'name' in game_result:
+            match_score = calculate_match_score(game_result['name'], search_name)
+            
+            if match_score > 0:  # Only consider games that match
+                rating_count = game_result.get('rating_count', 0)
+                # Combine match score with popularity (match score is weighted much higher)
+                total_score = match_score + (rating_count / 1000)  # Small popularity bonus
+                
+                if total_score > best_score:
+                    best_match = game_result
+                    best_score = total_score
+    
+    # If no name matches found, fall back to the most popular game
+    if not best_match and games:
+        best_rating_count = -1
+        for game_result in games:
+            rating_count = game_result.get('rating_count', 0)
+            if rating_count > best_rating_count:
+                best_match = game_result
+                best_rating_count = rating_count
+        
+        # If still no match (all have 0 ratings), take the first one
+        if not best_match:
+            best_match = games[0]
+    
+    return best_match
+
+
 def fetch_game_name(folder_path, config):
     client_id = config["igdb"]['client_id']
     client_secret = config["igdb"]['client_secret']
-    releaseDate = 2000
-    rawg_API = config["rawg_API"]
-
+    releaseDate = 2020
     folder_name = fix_filename(folder_path)
     folder_name = os.path.basename(folder_name)
     original_folder_name = folder_name
@@ -66,83 +139,64 @@ def fetch_game_name(folder_path, config):
     logger.debug(f"Name obtained from directory's name: {folder_name}")
     game = None
     
-    if rawg_API is not None:
-        # RAWG Stuff
-        rawg_url = "https://api.rawg.io/api/games"
-        params = {"key": rawg_API, "search": folder_name}
-        try:
-            response = requests.get(rawg_url, params=params)
-            if response.status_code != 200:
-                raise ConnectionError(f"RAWG Status code: {response.status_code}")
-            data = response.json()
+    try:
+        r = requests.post(
+            f"https://id.twitch.tv/oauth2/token?client_id={client_id}&client_secret={client_secret}&grant_type=client_credentials")
+        if r.status_code != 200:
+            raise ConnectionError(f"Token request failed with status {r.status_code}")
+        access_token = json.loads(r.content)['access_token']
+        headers = {
+            'Client-ID': client_id,
+            'Authorization': f'Bearer {access_token}',
+            'Accept': 'application/json'
+        }
+        query = f'''search "{folder_name}"; 
+            fields name,first_release_date,alternative_names.name, rating_count;                 
+            where game_type = (0, 4) & version_parent = null;
+            limit 10;
+            '''
             
-            # Check if results exist and are not empty
-            if data.get('results') and len(data['results']) > 0:
-                game_info = data['results'][0]
-                game = game_info["name"]
-                releaseDate = game_info.get("released", "")[:4] if game_info.get("released") else str(releaseDate)
-                logger.debug(f"Name obtained from RAWG's API: {game} releaseDate={releaseDate}")
-            else:
-                logger.warning(f"No results found for game '{folder_name}' in RAWG database")
-                
-        except Exception as e:
-            logger.error(f"Error fetching from RAWG API: {str(e)}")
-            
-    else:
-        # IGDB Stuff
-        try:
-            r = requests.post(
-                f"https://id.twitch.tv/oauth2/token?client_id={client_id}&client_secret={client_secret}&grant_type=client_credentials")
-            if r.status_code != 200:
-                raise ConnectionError(f"Token request failed with status {r.status_code}")
-            access_token = json.loads(r.content)['access_token']
-            headers = {
-                'Client-ID': client_id,
-                'Authorization': f'Bearer {access_token}',
-                'Accept': 'application/json'
-            }
-            query = f'''search "{folder_name}"; 
-                fields name,first_release_date,alternative_names.name;                 
-                where game_type = (0, 4) & version_parent = null;
-                limit 10;
-                '''
-                
-            res = requests.post('https://api.igdb.com/v4/games', headers=headers, data=query)
-            res.raise_for_status()
-            games = res.json()
-            logger.debug(games)
-            
-            best_match = None
-            for game_result in games:
-                if 'name' in game_result:
-                    if folder_name.lower() in game_result['name'].lower() or game_result['name'].lower() in folder_name.lower():
-                        best_match = game_result
-                        break
-            
-            if not best_match and games:
-                best_match = games[0]
-            
-            if best_match:
-                game = best_match['name']
-                releaseDate = best_match['first_release_date'] if 'first_release_date' in best_match else None
-                if releaseDate:
-                    releaseDate = datetime.datetime.fromtimestamp(releaseDate).year
-                logger.info(f"Name obtained from IGDB's API: {game} releaseDate={releaseDate}")
+        res = requests.post('https://api.igdb.com/v4/games', headers=headers, data=query)
+        res.raise_for_status()
+        games = res.json()
+        logger.debug(games)
+        
+        
+        best_match = find_best_match(games, folder_name)
+        
+        if best_match:
+            game = best_match['name']
+            releaseDate = best_match['first_release_date'] if 'first_release_date' in best_match else None
+            if releaseDate:
+                releaseDate = datetime.datetime.fromtimestamp(releaseDate).year
+            logger.info(f"Name obtained from IGDB's API: {game} releaseDate={releaseDate} ratings={best_match.get('rating_count', 0)}")
+            is_popular, reason = quality_check(best_match, config)
+            if not is_popular:
+                logger.warning(f"Game '{game}' filtered out: {reason}")
+                raise ValueError(f"Game popularity filter failed: {reason}")
+            logger.info(f"Game '{game}' passed popularity check: {best_match.get('rating_count', 0)} ratings")
 
-            if not game:
-                logger.warning(f"No results found for game '{folder_name}' in IGDB database")
-                
-        except Exception as e:
-            logger.error(f"Error fetching from IGDB API: {str(e)}")
-            logger.debug(f"Query used: {query if 'query' in locals() else 'Query not defined'}")
-            logger.debug(f"Folder name searched: {folder_name}")
-    
+
+        if not game:
+            logger.warning(f"No results found for game '{folder_name}' in IGDB database")
+    except ValueError:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching from IGDB API: {str(e)}")
+        logger.error(f"Folder name searched: {folder_name}")
+        logger.debug(f"Query used: {query if 'query' in locals() else 'Query not defined'}")
+
     # Fallback: use original folder name if API search failed
     if not game:
+        if config.get("skip_unknown_games", False):
+            logger.warning(f"Game not found in API and skip_unknown_games is enabled")
+            raise ValueError("Game not found in API and skip_unknown_games is enabled")
+            
         game = original_folder_name
         logger.warning(f"API search failed. Using original folder name as fallback: {game}")
         # Set a default release date if we couldn't get one from API
         releaseDate = config.get("releaseDate", 2020)
+    
     # Some games have special characters in their names, so we need to scrub them for Windows compatibility.
     game = scrub_filename(game)
     config["releaseDate"] = releaseDate
@@ -156,21 +210,17 @@ def find_rar_files(folder_path):
     Handles extended sequences: .rar, .r00-.r99, .s00-.s99, .t00-.t99, etc.
     """
     all_files = os.listdir(folder_path)
-    
     main_rar = None
     rar_files = []
     
-    # Function to check if a file is a RAR part file
     def is_rar_part(filename):
         return bool(re.match(r'.*\.[r-z]\d{2}$', filename, re.IGNORECASE))
     
-    # Function to check if a file is a numbered part file
     def is_part_numbered(filename):
         return bool(re.match(r'.*\.part\d+\.rar$', filename, re.IGNORECASE))
     
     # First, try to find the main RAR file
     for file in all_files:
-        # Skip part files when looking for main RAR
         if is_rar_part(file) or is_part_numbered(file):
             continue
             
@@ -178,7 +228,6 @@ def find_rar_files(folder_path):
             main_rar = os.path.join(folder_path, file)
             break
     
-    # If no main RAR found, check if we have split files
     if not main_rar:
         # Look for any file with .r00 through .z99 extension
         r_files = [f for f in all_files if is_rar_part(f)]
@@ -189,7 +238,6 @@ def find_rar_files(folder_path):
             if potential_main in all_files:
                 main_rar = os.path.join(folder_path, potential_main)
     
-    # If still no main RAR found, check for numbered part files
     if not main_rar:
         part_files = [f for f in all_files if is_part_numbered(f)]
         if part_files:
@@ -384,6 +432,24 @@ def handle_rar_file(folder_path, game_name, config):
     return extraction_successful, root_folder
 
 
+def quality_check(game_data, config):
+    """
+    Checks if this game is popular enough (has enough ratings/reviews).
+    Returns (is_popular, reason) tuple.
+    """
+    if not config.get("enable_popularity_filter", False):
+        return True, "Popularity filter disabled"
+
+    popularity_config = config.get("popularity_filters", {})
+    
+    rating_count = game_data.get("rating_count", 0)
+    min_rating_count = popularity_config.get("min_igdb_rating_count", 100)
+    
+    if rating_count < min_rating_count:
+        return False, f"Not popular enough - only {rating_count} ratings (minimum: {min_rating_count})"
+
+    return True, f"Game is popular enough with {rating_count} ratings"
+
 
 def compression(folder_path, game_name, config):
     store_folder = config["storeFolder"]
@@ -408,11 +474,17 @@ def main():
     parser.add_argument("-c", "--category", action="store", help="Torrent category")
     parser.add_argument("-n", "--name", action="store", help="Provide the file's name in case we can't pick it up")
     parser.add_argument("--debug", action="store_true", help="Enable non-interactive debugging mode")
+    parser.add_argument("--force-compress", action="store_true", help="Bypass popularity filters")
     args = parser.parse_args()
     load_logger(config, args.debug)
     folder_path = args.input
     logger.debug(f"Loaded passwords: {config['password_list']}")
+    if args.force_compress:
+        config["enable_popularity_filter"] = False
+        logger.info("Popularity filters bypassed due to --force-compress flag")
+    
     # This simple 10s fixes an unknown bug in my setup that caused file corruption
+    print("Waiting 10 seconds to ensure all files are ready...")
     time.sleep(10)
 
     if args.category == config["category_name"]:
@@ -432,13 +504,16 @@ def main():
                 logger.info(f"No RAR handling needed. Starting direct compression from {folder_path}")
                 compression(folder_path, game_name, config)
                 logger.info(f"Successfully compressed {game_name}")
-                
+        except ValueError as e:
+            if "popularity filter" in str(e).lower() or "skip_unknown_games" in str(e).lower():
+                logger.info(f"Game skipped: {e}")
+                return  # Exit gracefully, don't treat as error
+            else:
+                raise
         except Exception as e:
             logger.error(f"Error during processing: {str(e)}")
             logger.error(f"Failed to process {folder_path}")
-            
             raise SystemExit(1)
-        
     else:
         logger.error(f"Unknown category: {args.category}")
 

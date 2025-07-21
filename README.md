@@ -1,7 +1,7 @@
 # GameZip
 
 GameZip is a Python script that processes a target directory based on the specified category.
-The script will use the RAWG or IGDB API to correct the file name, compress the game, and store it in the directory specified in the `.env` configuration file.
+The script will use the IGDB API to correct the file name, compress the game, and store it in the directory specified in the `.env` configuration file.
 GameZip is designed to be triggered by a torrent client upon torrent completion in a Linux environment but can also be executed as a standalone script.
 
 ## Configuration
@@ -16,7 +16,7 @@ GameZip is designed to be triggered by a torrent client upon torrent completion 
 1. **Rename** `.env.example` to `.env` and configure the following fields:
 
     - `multithread`: Set the number of CPU threads for 7z to use during compression.
-    - `API`: Your RAWG API Key. <- Alternatively, set up IGDB instead of this.
+    - `IGDB fields`: [read here how to get them](https://api-docs.igdb.com/#account-creation)
     - `categoryName`: The category name for your torrent's games. This ensures the script only compresses game files and not other types of files.
     - `storeFolder`: The directory where the script will store the compressed and renamed versions of the games.
 
