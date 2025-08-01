@@ -50,7 +50,10 @@ def load_logger(config, debug_mode):
 
 def scrub_filename(name):
     # Remove special characters and stuff between [brackets] from the name, so we can search our game's API easily.
-    return re.sub(r'\[.*?\]|\W(?<!\s)|\d', '', name)
+    cleaned = re.sub(r'\[.*?\]|\W(?<!\s)|\d', '', name)
+    # Remove spaces at the end
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned
 
 
 def fix_filename(file):
@@ -69,28 +72,62 @@ def find_best_match(games, search_name):
         game_lower = game_name.lower()
         search_lower = search_name.lower()
         
+        # Exact match gets highest score
         if game_lower == search_lower:
             return 1000
         
+        # Game name starts with search term and is not much longer
         if game_lower.startswith(search_lower):
-            return 800
+            length_ratio = len(search_lower) / len(game_lower)
+            if length_ratio > 0.8:  # Game name is not much longer than search term
+                return 900
+            elif length_ratio > 0.6:
+                return 800
+            else:
+                return 400  # Much longer, less relevant
         
+        # Search term starts with game name - be more strict here
         if search_lower.startswith(game_lower):
-            return 700
+            length_ratio = len(game_lower) / len(search_lower)
+            # Only give high score if the game name is a significant part
+            if length_ratio > 0.8:  # Game name is almost as long as search term
+                return 850
+            elif length_ratio > 0.6:
+                return 750
+            elif length_ratio > 0.4:  # Still substantial portion
+                return 400
+            else:
+                return 150  # Game name is too short compared to search term
         
         # Game name contains search term as whole word
         if f" {search_lower} " in f" {game_lower} ":
             return 600
         
-        # Search term contains game name as whole word
+        # Search term contains game name as whole word - be very strict
         if f" {game_lower} " in f" {search_lower} ":
-            return 500
+            length_ratio = len(game_lower) / len(search_lower)
+            if length_ratio > 0.5:  # Game name is substantial part of search
+                return 500
+            else:
+                return 200  # Game name is small part of search
         
+        # Partial matches with length consideration
         if search_lower in game_lower:
-            return 300
+            length_ratio = len(search_lower) / len(game_lower)
+            if length_ratio > 0.7:  # Search term is a significant part of game name
+                return 300
+            else:
+                return 150  # Search term is a small part of game name
         
+        # Game name contained in search term - very strict penalties
         if game_lower in search_lower:
-            return 200
+            length_ratio = len(game_lower) / len(search_lower)
+            if length_ratio > 0.7:  # Game name is a significant part of search term
+                return 250
+            elif length_ratio > 0.4:  # Moderate portion
+                return 150
+            else:
+                return 50  # Game name is a very small part of search term
         
         # No match
         return 0
@@ -99,14 +136,16 @@ def find_best_match(games, search_name):
     best_score = -1
     
     # Find the best match based on name similarity first, then popularity
+    logger.debug(f"games found from API: {games}")
     for game_result in games:
         if 'name' in game_result:
             match_score = calculate_match_score(game_result['name'], search_name)
+            logger.debug(f"Match score for '{game_result['name']}' against '{search_name}': {match_score}")
             
             if match_score > 0:  # Only consider games that match
-                rating_count = game_result.get('rating_count', 0)
+                rating_count = game_result.get('total_rating_count', 0)
                 # Combine match score with popularity (match score is weighted much higher)
-                total_score = match_score + (rating_count / 1000)  # Small popularity bonus
+                total_score = match_score + (rating_count / 10)  # popularity bonus
                 
                 if total_score > best_score:
                     best_match = game_result
@@ -116,7 +155,7 @@ def find_best_match(games, search_name):
     if not best_match and games:
         best_rating_count = -1
         for game_result in games:
-            rating_count = game_result.get('rating_count', 0)
+            rating_count = game_result.get('total_rating_count', 0)
             if rating_count > best_rating_count:
                 best_match = game_result
                 best_rating_count = rating_count
@@ -151,7 +190,7 @@ def fetch_game_name(folder_path, config):
             'Accept': 'application/json'
         }
         query = f'''search "{folder_name}"; 
-            fields name,first_release_date,alternative_names.name, rating_count;                 
+            fields name,first_release_date,alternative_names.name, total_rating_count;                 
             where game_type = (0, 4) & version_parent = null;
             limit 10;
             '''
@@ -174,7 +213,7 @@ def fetch_game_name(folder_path, config):
             if not is_popular:
                 logger.warning(f"Game '{game}' filtered out: {reason}")
                 raise ValueError(f"Game popularity filter failed: {reason}")
-            logger.info(f"Game '{game}' passed popularity check: {best_match.get('rating_count', 0)} ratings")
+            logger.info(f"Game '{game}' passed popularity check: {best_match.get('total_rating_count', 0)} ratings")
 
 
         if not game:
@@ -442,7 +481,7 @@ def quality_check(game_data, config):
 
     popularity_config = config.get("popularity_filters", {})
     
-    rating_count = game_data.get("rating_count", 0)
+    rating_count = game_data.get("total_rating_count", 0)
     min_rating_count = popularity_config.get("min_igdb_rating_count", 100)
     
     if rating_count < min_rating_count:
