@@ -521,10 +521,6 @@ def main():
     if args.force_compress:
         config["enable_popularity_filter"] = False
         logger.info("Popularity filters bypassed due to --force-compress flag")
-    
-    # This simple 10s fixes an unknown bug in my setup that caused file corruption
-    print("Waiting 10 seconds to ensure all files are ready...")
-    time.sleep(10)
 
     if args.category == config["category_name"]:
         try:
