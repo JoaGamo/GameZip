@@ -1,557 +1,642 @@
-import os
-import argparse
-import requests
-import re
-import subprocess
-import logging
-import json
-import datetime
-import rarfile
-import uuid 
-import shutil
-import time
+#!/usr/bin/env python3
+"""
+Game Processor - Refactored Version
+Processes game folders: fixes names via IGDB API, handles RAR extraction, and compresses for storage.
+"""
 
-from shutil import which
+import os
+import re
+import json
+import time
+import uuid
+import shutil
+import logging
+import argparse
+import datetime
+import subprocess
+from typing import Optional, Tuple, Dict, List, Any
+from dataclasses import dataclass
+from pathlib import Path
+
+import rarfile
+import requests
 from dotenv import load_dotenv
 
 
-def load_config():
-    load_dotenv()
-    config = {
-        "category_name": os.getenv("categoryName"),
-        "logFileLocation": os.getenv("logFileLocation"),
-        "releaseDate": 2020,
-        "multithread": os.getenv("multithread"),
-        "storeFolder": os.getenv("storeFolder"),
-        "igdb": {
-            "client_id": os.getenv("client_id"),
-            "client_secret": os.getenv("client_secret")
-        },
-        "compressionCMD": "7zz" if which("7z") is None else "7z",
-        "password_list": os.getenv("password_list", "").split(","),
+# ========================= Data Classes =========================
+
+@dataclass
+class Config:
+    """Configuration data class"""
+    category_name: str
+    log_file_location: str
+    release_date: int
+    multithread: str
+    store_folder: str
+    igdb_client_id: str
+    igdb_client_secret: str
+    compression_cmd: str
+    password_list: List[str]
+    skip_unknown_games: bool
+    enable_popularity_filter: bool
+    min_igdb_rating_count: int
+    
+    @classmethod
+    def from_env(cls) -> 'Config':
+        """Load configuration from environment variables"""
+        load_dotenv()
         
-        # Popularity filter settings - only check how many ratings/reviews a game has
-        "enable_popularity_filter": os.getenv("ENABLE_POPULARITY_FILTER", "false").lower() == "true",
-        "skip_unknown_games": os.getenv("SKIP_UNKNOWN_GAMES", "false").lower() == "true",
-        "popularity_filters": {
-            "min_igdb_rating_count": int(os.getenv("MIN_IGDB_RATING_COUNT", "100")),
-        }
-    }
-    return config
+        # Determine compression command
+        from shutil import which
+        compression_cmd = "7zz" if which("7z") is None else "7z"
+        
+        return cls(
+            category_name=os.getenv("categoryName", ""),
+            log_file_location=os.getenv("logFileLocation", "game_processor.log"),
+            release_date=2020,
+            multithread=os.getenv("multithread", "on"),
+            store_folder=os.getenv("storeFolder", "./compressed/"),
+            igdb_client_id=os.getenv("client_id", ""),
+            igdb_client_secret=os.getenv("client_secret", ""),
+            compression_cmd=compression_cmd,
+            password_list=[p.strip() for p in os.getenv("password_list", "").split(",") if p.strip()],
+            enable_popularity_filter=os.getenv("ENABLE_POPULARITY_FILTER", "false").lower() == "true",
+            min_igdb_rating_count=int(os.getenv("MIN_IGDB_RATING_COUNT", "100")),
+            skip_unknown_games=os.getenv("SKIP_UNKNOWN_GAMES", "false").lower() == "true"
+        )
 
 
-def load_logger(config, debug_mode):
-    global logger
-    logging.basicConfig(filename=config["logFileLocation"], format='%(asctime)s %(message)s', filemode='a')
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    if debug_mode:
-        logger.setLevel(logging.DEBUG)
-
-def scrub_filename(name):
-    # Remove special characters and stuff between [brackets] from the name, so we can search our game's API easily.
-    cleaned = re.sub(r'\[.*?\]|\W(?<!\s)|\d', '', name)
-    # Remove spaces at the end
-    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-    return cleaned
+@dataclass
+class GameInfo:
+    """Game information from IGDB"""
+    name: str
+    release_year: Optional[int] = None
+    rating_count: int = 0
+    igdb_id: Optional[int] = None
 
 
-def fix_filename(file):
-    if file.endswith(os.path.sep):
-        file = file.rstrip(os.path.sep)
-    return file
+# ========================= Utilities =========================
+
+class GameNameCleaner:
+    """Handles game name cleaning and normalization"""
+    
+    @staticmethod
+    def clean_for_search(name: str) -> str:
+        """
+        Clean filename for API search
+        Removes special characters and content in brackets
+        """
+        # Remove content in brackets [like this]
+        cleaned = re.sub(r'\[.*?\]', '', name)
+        # Remove special characters except spaces and basic punctuation
+        cleaned = re.sub(r'[^\w\s\-]', ' ', cleaned)
+        # Remove multiple spaces and trim
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        return cleaned
+    
+    @staticmethod
+    def clean_for_filesystem(name: str) -> str:
+        """
+        Clean name for filesystem compatibility
+        Removes characters that might cause issues on Windows/Linux
+        """
+        # Remove/replace problematic characters
+        invalid_chars = '<>:"|?*'
+        for char in invalid_chars:
+            name = name.replace(char, '')
+        # Remove trailing dots and spaces (Windows compatibility)
+        name = name.rstrip('. ')
+        return name[:255]  # Max filename length
 
 
-def find_best_match(games, search_name):
-    """
-    Find the best matching game from a list of games based on name similarity.
-    Returns the best matching game or None if no matches found.
-    """
-    def calculate_match_score(game_name, search_name):
-        """Calculate how well a game name matches the search term"""
+class NameMatcher:
+    """Handles fuzzy name matching between search terms and game titles"""
+    
+    @staticmethod
+    def calculate_similarity_score(game_name: str, search_term: str) -> int:
+        """
+        Calculate similarity score between game name and search term
+        Higher score = better match
+        """
         game_lower = game_name.lower()
-        search_lower = search_name.lower()
+        search_lower = search_term.lower()
         
-        # Exact match gets highest score
+        # Exact match
         if game_lower == search_lower:
             return 1000
         
-        # Game name starts with search term and is not much longer
+        # Remove common words for better matching
+        common_words = {'the', 'of', 'and', 'a', 'an', 'in', 'on', 'at', 'to', 'for'}
+        game_words = set(game_lower.split()) - common_words
+        search_words = set(search_lower.split()) - common_words
+        
+        # All search words found in game name
+        if search_words and search_words.issubset(game_words):
+            return 900
+        
+        # Game name starts with search term
         if game_lower.startswith(search_lower):
-            length_ratio = len(search_lower) / len(game_lower)
-            if length_ratio > 0.8:  # Game name is not much longer than search term
-                return 900
-            elif length_ratio > 0.6:
-                return 800
-            else:
-                return 400  # Much longer, less relevant
+            return 800 + int(100 * len(search_lower) / len(game_lower))
         
-        # Search term starts with game name - be more strict here
+        # Search term starts with game name
         if search_lower.startswith(game_lower):
-            length_ratio = len(game_lower) / len(search_lower)
-            # Only give high score if the game name is a significant part
-            if length_ratio > 0.8:  # Game name is almost as long as search term
-                return 850
-            elif length_ratio > 0.6:
-                return 750
-            elif length_ratio > 0.4:  # Still substantial portion
-                return 400
-            else:
-                return 150  # Game name is too short compared to search term
+            return 700 + int(100 * len(game_lower) / len(search_lower))
         
-        # Game name contains search term as whole word
-        if f" {search_lower} " in f" {game_lower} ":
-            return 600
+        # Calculate word overlap
+        if game_words and search_words:
+            overlap = len(game_words & search_words)
+            total = len(game_words | search_words)
+            if total > 0:
+                return int(600 * overlap / total)
         
-        # Search term contains game name as whole word - be very strict
-        if f" {game_lower} " in f" {search_lower} ":
-            length_ratio = len(game_lower) / len(search_lower)
-            if length_ratio > 0.5:  # Game name is substantial part of search
-                return 500
-            else:
-                return 200  # Game name is small part of search
-        
-        # Partial matches with length consideration
+        # Substring matching
         if search_lower in game_lower:
-            length_ratio = len(search_lower) / len(game_lower)
-            if length_ratio > 0.7:  # Search term is a significant part of game name
-                return 300
-            else:
-                return 150  # Search term is a small part of game name
+            return 400 + int(100 * len(search_lower) / len(game_lower))
         
-        # Game name contained in search term - very strict penalties
         if game_lower in search_lower:
-            length_ratio = len(game_lower) / len(search_lower)
-            if length_ratio > 0.7:  # Game name is a significant part of search term
-                return 250
-            elif length_ratio > 0.4:  # Moderate portion
-                return 150
-            else:
-                return 50  # Game name is a very small part of search term
+            return 300 + int(100 * len(game_lower) / len(search_lower))
         
-        # No match
         return 0
+
+
+# ========================= IGDB API Client =========================
+
+class IGDBClient:
+    """IGDB API client for game information retrieval"""
     
-    best_match = None
-    best_score = -1
+    BASE_URL = "https://api.igdb.com/v4"
+    TOKEN_URL = "https://id.twitch.tv/oauth2/token"
     
-    # Find the best match based on name similarity first, then popularity
-    logger.debug(f"games found from API: {games}")
-    for game_result in games:
-        if 'name' in game_result:
-            match_score = calculate_match_score(game_result['name'], search_name)
-            logger.debug(f"Match score for '{game_result['name']}' against '{search_name}': {match_score}")
-            
-            if match_score > 0:  # Only consider games that match
-                rating_count = game_result.get('total_rating_count', 0)
-                # Combine match score with popularity (match score is weighted much higher)
-                total_score = match_score + (rating_count / 10)  # popularity bonus
-                
-                if total_score > best_score:
-                    best_match = game_result
-                    best_score = total_score
+    def __init__(self, client_id: str, client_secret: str):
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.access_token = None
+        self.logger = logging.getLogger(__name__)
     
-    # If no name matches found, fall back to the most popular game
-    if not best_match and games:
-        best_rating_count = -1
-        for game_result in games:
-            rating_count = game_result.get('total_rating_count', 0)
-            if rating_count > best_rating_count:
-                best_match = game_result
-                best_rating_count = rating_count
+    def _get_access_token(self) -> str:
+        """Get or refresh access token"""
+        if self.access_token:
+            return self.access_token
         
-        # If still no match (all have 0 ratings), take the first one
-        if not best_match:
-            best_match = games[0]
+        response = requests.post(
+            self.TOKEN_URL,
+            params={
+                'client_id': self.client_id,
+                'client_secret': self.client_secret,
+                'grant_type': 'client_credentials'
+            }
+        )
+        response.raise_for_status()
+        
+        self.access_token = response.json()['access_token']
+        return self.access_token
     
-    return best_match
-
-
-def fetch_game_name(folder_path, config):
-    client_id = config["igdb"]['client_id']
-    client_secret = config["igdb"]['client_secret']
-    releaseDate = 2020
-    folder_name = fix_filename(folder_path)
-    folder_name = os.path.basename(folder_name)
-    original_folder_name = folder_name
-    folder_name = scrub_filename(folder_name)
-    logger.debug(f"Name obtained from directory's name: {folder_name}")
-    game = None
-    
-    try:
-        r = requests.post(
-            f"https://id.twitch.tv/oauth2/token?client_id={client_id}&client_secret={client_secret}&grant_type=client_credentials")
-        if r.status_code != 200:
-            raise ConnectionError(f"Token request failed with status {r.status_code}")
-        access_token = json.loads(r.content)['access_token']
+    def search_game(self, search_name: str) -> List[Dict[str, Any]]:
+        """
+        Search for games by name
+        Returns list of matching games with their information
+        """
         headers = {
-            'Client-ID': client_id,
-            'Authorization': f'Bearer {access_token}',
+            'Client-ID': self.client_id,
+            'Authorization': f'Bearer {self._get_access_token()}',
             'Accept': 'application/json'
         }
-        query = f'''search "{folder_name}"; 
-            fields name,first_release_date,alternative_names.name, total_rating_count;                 
-            where game_type = (0, 4) & version_parent = null;
-            limit 10;
-            '''
-            
-        res = requests.post('https://api.igdb.com/v4/games', headers=headers, data=query)
-        res.raise_for_status()
-        games = res.json()
-        logger.debug(games)
         
+        # IGDB query
+        query = f'''
+            search "{search_name}";
+            fields name, first_release_date, total_rating_count, id;
+            where game_modes != null & version_parent = null;
+            limit 20;
+        '''
         
-        best_match = find_best_match(games, folder_name)
-        
-        if best_match:
-            game = best_match['name']
-            releaseDate = best_match['first_release_date'] if 'first_release_date' in best_match else None
-            if releaseDate:
-                releaseDate = datetime.datetime.fromtimestamp(releaseDate).year
-            logger.info(f"Name obtained from IGDB's API: {game} releaseDate={releaseDate} ratings={best_match.get('rating_count', 0)}")
-            is_popular, reason = quality_check(best_match, config)
-            if not is_popular:
-                logger.warning(f"Game '{game}' filtered out: {reason}")
-                raise ValueError(f"Game popularity filter failed: {reason}")
-            logger.info(f"Game '{game}' passed popularity check: {best_match.get('total_rating_count', 0)} ratings")
-
-
-        if not game:
-            logger.warning(f"No results found for game '{folder_name}' in IGDB database")
-    except ValueError:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching from IGDB API: {str(e)}")
-        logger.error(f"Folder name searched: {folder_name}")
-        logger.debug(f"Query used: {query if 'query' in locals() else 'Query not defined'}")
-
-    # Fallback: use original folder name if API search failed
-    if not game:
-        if config.get("skip_unknown_games", False):
-            logger.warning(f"Game not found in API and skip_unknown_games is enabled")
-            raise ValueError("Game not found in API and skip_unknown_games is enabled")
-            
-        game = original_folder_name
-        logger.warning(f"API search failed. Using original folder name as fallback: {game}")
-        # Set a default release date if we couldn't get one from API
-        releaseDate = config.get("releaseDate", 2020)
-    
-    # Some games have special characters in their names, so we need to scrub them for Windows compatibility.
-    game = scrub_filename(game)
-    config["releaseDate"] = releaseDate
-    return game
-
-
-def find_rar_files(folder_path):
-    """
-    Find all RAR files in the folder, including split volumes.
-    Returns the main RAR file and a list of all related volumes.
-    Handles extended sequences: .rar, .r00-.r99, .s00-.s99, .t00-.t99, etc.
-    """
-    all_files = os.listdir(folder_path)
-    main_rar = None
-    rar_files = []
-    
-    def is_rar_part(filename):
-        return bool(re.match(r'.*\.[r-z]\d{2}$', filename, re.IGNORECASE))
-    
-    def is_part_numbered(filename):
-        return bool(re.match(r'.*\.part\d+\.rar$', filename, re.IGNORECASE))
-    
-    # First, try to find the main RAR file
-    for file in all_files:
-        if is_rar_part(file) or is_part_numbered(file):
-            continue
-            
-        if file.lower().endswith('.rar'):
-            main_rar = os.path.join(folder_path, file)
-            break
-    
-    if not main_rar:
-        # Look for any file with .r00 through .z99 extension
-        r_files = [f for f in all_files if is_rar_part(f)]
-        if r_files:
-            # For this format, the main file should be .rar
-            base_name = re.sub(r'\.[r-z]\d{2}$', '', r_files[0], flags=re.IGNORECASE)
-            potential_main = f"{base_name}.rar"
-            if potential_main in all_files:
-                main_rar = os.path.join(folder_path, potential_main)
-    
-    if not main_rar:
-        part_files = [f for f in all_files if is_part_numbered(f)]
-        if part_files:
-            # Sort part files to ensure the first part is selected as main
-            part_files.sort(key=lambda x: int(re.search(r'\.part(\d+)\.rar$', x).group(1)))
-            main_rar = os.path.join(folder_path, part_files[0])
-
-    if not main_rar:
-        return None, []
-    
-    # Get the base name without extension
-    main_base = re.sub(r'\.rar$', '', os.path.basename(main_rar))
-    
-    # Now collect all related RAR parts
-    for file in all_files:
-        full_path = os.path.join(folder_path, file)
-        
-        # Skip the main RAR file as we already have it
-        if full_path == main_rar:
-            continue
-            
-        # Check if this file belongs to the same RAR set
-        if is_rar_part(file) or is_part_numbered(file) or file.lower().endswith('.rar'):
-            # Get the base name of this file
-            if is_rar_part(file):
-                file_base = re.sub(r'\.[r-z]\d{2}$', '', file)
-            elif is_part_numbered(file):
-                file_base = re.sub(r'\.part\d+\.rar$', '', file)
-            else:
-                file_base = re.sub(r'\.rar$', '', file)
-                
-            # If the base names match, this is part of our RAR set
-            if file_base.lower() == main_base.lower():
-                rar_files.append(full_path)
-    
-    logger.debug(f"Found main RAR: {main_rar}")
-    logger.debug(f"Found RAR parts: {rar_files}")
-    
-    # Sort the RAR files to ensure proper order
-    def rar_sort_key(path):
-        filename = os.path.basename(path).lower()
-        if '.part' in filename:
-            match = re.search(r'\.part(\d+)\.rar$', filename)
-            return (1, int(match.group(1)) if match else 0)
-        elif re.match(r'.*\.[r-z]\d{2}$', filename):
-            match = re.search(r'\.([r-z])(\d{2})$', filename)
-            if match:
-                letter, number = match.groups()
-                letter_value = (ord(letter.lower()) - ord('r')) * 100
-                return (2, letter_value + int(number))
-        return (0, 0)  # Main .rar file comes first
-    
-    rar_files = sorted(rar_files, key=rar_sort_key)
-    
-    # Add main RAR to the beginning of the list
-    all_rar_files = [main_rar] + rar_files
-    
-    return main_rar, all_rar_files
-
-
-def try_unlock_rar(rar_file, password_list):
-    for password in password_list:
-        logger.debug(f"Trying password: {password}")
         try:
-            with rarfile.RarFile(rar_file, 'r') as rf:
-                logger.debug(f"Attempting to list contents with password: {password}")
-                rf.setpassword(password)
-
-                if len(rf.namelist()) == 0:
-                    raise rarfile.RarWrongPassword("Wrong password")
-                logger.debug(f"Successfully unlocked RAR with password: {password}")
-                return password
-        except rarfile.BadRarFile:
-            logger.error(f"File {rar_file} is corrupted")  
-            raise
-        except (rarfile.PasswordRequired, rarfile.RarWrongPassword):
-            logger.debug(f"Password {password} is incorrect")
-            continue
-            
-    logger.warning("Failed to unlock RAR with any provided password")
-    return None 
-
-
-def extract_rar(rar_path, extract_path, config):
-    """
-    Extract RAR file to the specified path.
-    Returns True if extraction was successful, False otherwise.
-    """
-    command = ['unrar', 'x', '-y']
-    password = None
+            response = requests.post(
+                f"{self.BASE_URL}/games",
+                headers=headers,
+                data=query,
+                timeout=10
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            self.logger.error(f"IGDB API error: {e}")
+            return []
     
-    try:
-        with rarfile.RarFile(rar_path, 'r') as rf:
-            if rf.needs_password():
-                password = try_unlock_rar(rar_path, config["password_list"])
-                if not password:
-                    raise ValueError(f"Failed to unlock RAR file: {rar_path}")
-                command.extend([f'-p{password}'])
+    def find_best_match(self, search_name: str) -> Optional[GameInfo]:
+        """
+        Find the best matching game for the given search term
+        """
+        games = self.search_game(search_name)
         
-        command.extend([rar_path, extract_path])
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        if not games:
+            self.logger.warning(f"No games found for: {search_name}")
+            return None
         
-        if result.returncode != 0:
-            error_msg = result.stderr.strip()
-            if "is not RAR archive" not in error_msg:  # Ignore expected errors for split archives
-                logger.warning(f"Extraction warning: {error_msg}")
+        # Score and rank games
+        matcher = NameMatcher()
+        scored_games = []
         
-        # Verify extraction success by checking if files were created
-        if not os.listdir(extract_path):
-            raise subprocess.CalledProcessError(1, command, "Extraction failed - no files extracted")
+        for game in games:
+            if 'name' not in game:
+                continue
+            
+            score = matcher.calculate_similarity_score(game['name'], search_name)
+            
+            # Add small bonus for popularity
+            rating_count = game.get('total_rating_count', 0)
+            score += min(rating_count / 100, 50)  # Max 50 point bonus
+            
+            scored_games.append((score, game))
         
-        logger.info(f"Successfully extracted RAR file: {rar_path}")
-        return True
+        # Sort by score and get the best match
+        scored_games.sort(key=lambda x: x[0], reverse=True)
         
-    except subprocess.CalledProcessError as e:
-        print("Failed to extract RAR file, check your logs for more info")
-        logger.error(f"Failed to extract RAR file: {rar_path}. Error: {e}")
-        logger.error(f"Extraction of {rar_path} may have had issues. Output: {e.output}")
-        raise
+        if scored_games and scored_games[0][0] > 0:
+            best_game = scored_games[0][1]
+            
+            # Parse release date
+            release_year = None
+            if 'first_release_date' in best_game:
+                release_year = datetime.datetime.fromtimestamp(
+                    best_game['first_release_date']
+                ).year
+            
+            return GameInfo(
+                name=best_game['name'],
+                release_year=release_year,
+                rating_count=best_game.get('total_rating_count', 0),
+                igdb_id=best_game.get('id')
+            )
+        
+        return None
 
 
-def handle_rar_file(folder_path, game_name, config):
-    """
-    Handle RAR file extraction and cleanup.
-    Returns (success, root_folder) tuple.
-    """
-    main_rar, rar_files = find_rar_files(folder_path)
-    if not main_rar:
-        logger.info(f"No RAR files found in {folder_path}. Proceeding with normal compression.")
-        return False, None
+# ========================= RAR Handler =========================
 
-    # Create a unique subdirectory for extraction
-    temp_dir_name = f"temp_extract_{uuid.uuid4().hex}"
-    extract_dir = os.path.join(folder_path, temp_dir_name)
-    os.makedirs(extract_dir, exist_ok=True)
+class RARHandler:
+    """Handles RAR file detection, extraction, and cleanup"""
     
-    extraction_successful = False
-    root_folder = None
-
-    try:
-        if extract_rar(main_rar, extract_dir, config):
-            logger.info(f"Successfully extracted RAR file: {main_rar}")
-            
-            # Move extracted contents to the original folder
-            for item in os.listdir(extract_dir):
-                s = os.path.join(extract_dir, item)
-                d = os.path.join(folder_path, item)
-                if os.path.isdir(s):
-                    shutil.copytree(s, d, dirs_exist_ok=True)
-                else:
-                    shutil.copy2(s, d)
-            logger.info(f"Moved extracted contents to {folder_path}")
-            
-            extraction_successful = True
-            
-            # Clean up RAR files only after successful extraction and copying
-            for rar_file in [main_rar] + rar_files:
-                try:
-                    os.remove(rar_file)
-                    logger.debug(f"Removed RAR file: {rar_file}")
-                except OSError as e:
-                    logger.warning(f"Failed to remove RAR file {rar_file}: {e}")
-            
-            # Determine the root folder for compression
-            # Explicitly exclude the temporary directory from the search
-            directories = [d for d in os.listdir(folder_path) 
-                         if os.path.isdir(os.path.join(folder_path, d)) 
-                         and d != temp_dir_name]
-            
-            if len(directories) == 1:
-                root_folder = directories[0]
-                logger.info(f"First directory inside {folder_path} is {root_folder}")
-            elif len(directories) > 1:
-                logger.warning(f"Multiple directories found inside {folder_path}. Using original folder path.")
-                root_folder = os.path.basename(folder_path)
+    def __init__(self, password_list: List[str]):
+        self.password_list = password_list
+        self.logger = logging.getLogger(__name__)
+    
+    def find_rar_files(self, folder_path: Path) -> Tuple[Optional[Path], List[Path]]:
+        """
+        Find main RAR file and all related volumes
+        Returns (main_rar_path, list_of_all_parts)
+        """
+        folder_path = Path(folder_path)
+        all_files = list(folder_path.iterdir())
+        
+        # Group RAR files by base name (case-insensitive)
+        groups = {}
+        for file_path in all_files:
+            name = file_path.name.lower()
+            if not (name.endswith('.rar') or re.match(r'.*\.[r-z]\d{2}$', name)):
+                continue
+            base = re.sub(r'\.(part\d+)?\.(rar|[r-z]\d{2})$', '', name)
+            groups.setdefault(base, []).append(file_path)
+        
+        # Helper predicates
+        def is_plain_main(n): return n.endswith('.rar') and not re.search(r'\.part\d+\.(rar|[r-z]\d{2})$', n)
+        def part_number(n): m = re.search(r'\.part(\d+)\.(rar|[r-z]\d{2})$', n); return int(m.group(1)) if m else None
+        def letter_volume(n): m = re.search(r'\.([r-z])(\d{2})$', n); return (m.group(1), int(m.group(2))) if m else None
+        
+        # Select the appropriate group
+        best_group = None
+        for base, files in groups.items():
+            names = [f.name.lower() for f in files]
+            has_main = any(is_plain_main(n) for n in names)
+            parts = [part_number(n) for n in names if part_number(n) is not None]
+            # Prefer groups with a plain main .rar; tie-break by lowest base name
+            score = (0 if has_main else 1, base)
+            if best_group is None or score < best_group:
+                best_group = (score, base, files, has_main, min(parts) if parts else None)
+        
+        if not best_group:
+            return None, []
+        _, selected_base, selected_files, has_main, min_part = best_group
+        
+        # Determine main file
+        main_candidates = [f for f in selected_files if is_plain_main(f.name.lower())]
+        if main_candidates:
+            main_rar = main_candidates[0]
+        else:
+            part_candidates = [(f, part_number(f.name.lower())) for f in selected_files if part_number(f.name.lower()) is not None]
+            if part_candidates:
+                part_candidates.sort(key=lambda x: x[1])
+                main_rar = part_candidates[0][0]
             else:
-                logger.warning(f"No directories found inside {folder_path}. Using original folder path.")
-                root_folder = os.path.basename(folder_path)
-                
-    except Exception as e:
-        logger.error(f"Error during RAR handling: {str(e)}")
-        raise
-    finally:
-        # Clean up temporary extraction directory only if it exists
-        if os.path.exists(extract_dir):
+                main_rar = selected_files[0]
+        
+        # Sort all members: main first, then part numbers ascending, then letter volumes
+        sorted_files = []
+        part_files = [(f, part_number(f.name.lower())) for f in selected_files if f != main_rar and part_number(f.name.lower()) is not None]
+        letter_files = [(f, letter_volume(f.name.lower())) for f in selected_files if f != main_rar and letter_volume(f.name.lower()) is not None]
+        part_files.sort(key=lambda x: x[1])
+        letter_files.sort(key=lambda x: (x[1][0], x[1][1]))
+        sorted_list = [main_rar] + [f for f, _ in part_files] + [f for f, _ in letter_files]
+        return main_rar, sorted_list
+
+    def try_passwords(self, rar_path: Path) -> Optional[str]:
+        """Try to unlock RAR with password list
+        Returns successful password or None"""
+        for password in self.password_list:
             try:
-                shutil.rmtree(extract_dir)
-                logger.debug("Cleaned up temporary extraction directory")
-            except OSError as e:
-                logger.warning(f"Failed to clean up temporary directory {extract_dir}: {e}")
+                with rarfile.RarFile(str(rar_path), 'r') as rf:
+                    rf.setpassword(password)
+                    # Read first member to verify password actually decrypts data
+                    if rf.namelist():
+                        data = rf.read(rf.namelist()[0], pwd=password)
+                        return password
+            except (rarfile.PasswordRequired, rarfile.RarWrongPassword):
+                continue
+            except rarfile.BadRarFile:
+                self.logger.error(f"Corrupted RAR file: {rar_path}")
+                raise
+        return None
+
+    def extract(self, rar_path: Path, extract_to: Path, password: Optional[str] = None) -> bool:
+        """Extract RAR file using unrar command"""
+        cmd = ['unrar', 'x', '-y', '-o+']  # Extract with overwrite
+        if password:
+            cmd.append(f'-p{password}')
+        else:
+            cmd.append('-p-')  # No password
+        cmd.extend([str(rar_path), str(extract_to) + os.sep])
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                self.logger.error(f"Extraction failed (code {result.returncode}): {result.stderr}")
+                return False
+            if extract_to.exists() and any(extract_to.iterdir()):
+                return True
+            return False
+        except subprocess.SubprocessError as e:
+            self.logger.error(f"Extraction failed: {e}")
+            return False
+
+    def process_rar_archive(self, folder_path: Path) -> Tuple[bool, Optional[Path]]:
+        """Process RAR files in folder: extract and cleanup
+        Returns (success, extracted_content_path)"""
+        main_rar, all_rars = self.find_rar_files(folder_path)
+        if not main_rar:
+            return False, None
+        self.logger.info(f"Found RAR archive: {main_rar.name}")
+        temp_dir = folder_path / f"temp_extract_{uuid.uuid4().hex[:8]}"
+        temp_dir.mkdir(exist_ok=True)
+        try:
+            password = None
+            try:
+                with rarfile.RarFile(str(main_rar), 'r') as rf:
+                    if rf.needs_password():
+                        password = self.try_passwords(main_rar)
+                        if not password:
+                            raise ValueError(f"Cannot unlock RAR: {main_rar.name}")
+            except rarfile.NeedFirstVolume:
+                pass
+            if not self.extract(main_rar, temp_dir, password):
+                raise ValueError(f"Extraction failed: {main_rar.name}")
+            # Move extracted contents to main folder
+            for item in temp_dir.iterdir():
+                dest = folder_path / item.name
+                if dest.exists():
+                    if dest.is_dir():
+                        shutil.rmtree(dest)
+                    else:
+                        dest.unlink()
+                shutil.move(str(item), str(dest))
+            # Clean up RAR files ONLY after successful extraction and move-back
+            for rar_file in all_rars:
+                try:
+                    rar_file.unlink()
+                    self.logger.debug(f"Removed: {rar_file.name}")
+                except OSError as e:
+                    self.logger.warning(f"Cannot remove {rar_file.name}: {e}")
+            # Find the main game folder
+            dirs = [d for d in folder_path.iterdir() if d.is_dir() and not d.name.startswith('temp_')]
+            return True, dirs[0] if len(dirs) == 1 else folder_path
+        finally:
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+# ========================= Compressor =========================
+
+class GameCompressor:
+    """Handles game compression to 7z format"""
     
-    return extraction_successful, root_folder
-
-
-def quality_check(game_data, config):
-    """
-    Checks if this game is popular enough (has enough ratings/reviews).
-    Returns (is_popular, reason) tuple.
-    """
-    if not config.get("enable_popularity_filter", False):
-        return True, "Popularity filter disabled"
-
-    popularity_config = config.get("popularity_filters", {})
+    def __init__(self, config: Config):
+        self.config = config
+        self.logger = logging.getLogger(__name__)
     
-    rating_count = game_data.get("total_rating_count", 0)
-    min_rating_count = popularity_config.get("min_igdb_rating_count", 100)
+    def compress(self, source_path: Path, game_info: GameInfo) -> bool:
+        """
+        Compress game folder to 7z archive
+        """
+        # Prepare output filename
+        game_name_clean = GameNameCleaner.clean_for_filesystem(game_info.name)
+        year = game_info.release_year or self.config.release_date
+        
+        output_file = Path(self.config.store_folder) / f"{game_name_clean} ({year}).7z"
+        
+        # Check if already exists
+        if output_file.exists():
+            self.logger.warning(f"Archive already exists: {output_file}")
+            return False
+        
+        # Ensure output directory exists
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Build compression command
+        cmd = [
+            self.config.compression_cmd,
+            'a',  # Add to archive
+            '-t7z',  # 7z format
+            '-mx=5',  # Compression level (5 = normal)
+            f'-mmt={self.config.multithread}',  # Multi-threading
+            str(output_file),
+            str(source_path) + '/*'
+        ]
+        
+        self.logger.info(f"Compressing: {source_path.name} -> {output_file.name}")
+        
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            self.logger.info(f"Successfully compressed: {output_file.name}")
+            return True
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Compression failed: {e}")
+            self.logger.error(f"Output: {e.stderr}")
+            
+            # Clean up partial file
+            if output_file.exists():
+                output_file.unlink()
+            
+            return False
+
+
+# ========================= Main Processor =========================
+
+class GameProcessor:
+    """Main game processing orchestrator"""
     
-    if rating_count < min_rating_count:
-        return False, f"Not popular enough - only {rating_count} ratings (minimum: {min_rating_count})"
+    def __init__(self, config: Config):
+        self.config = config
+        self.igdb_client = IGDBClient(config.igdb_client_id, config.igdb_client_secret)
+        self.rar_handler = RARHandler(config.password_list)
+        self.compressor = GameCompressor(config)
+        self.logger = logging.getLogger(__name__)
+    
+    def _passes_popularity_filter(self, game_info: GameInfo) -> bool:
+        """Check if game passes the popularity filter"""
+        if not self.config.enable_popularity_filter:
+            return True
+        return game_info.rating_count >= self.config.min_igdb_rating_count
+    
+    def identify_game(self, folder_path: Path, override_name: Optional[str] = None) -> Optional[GameInfo]:
+        """
+        Identify game from folder name using IGDB
+        """
+        if override_name:
+            search_clean = GameNameCleaner.clean_for_search(override_name)
+            self.logger.info(
+                f"Manual name override: '{override_name}' (searching IGDB for release year)"
+            )
+            igdb_match = self.igdb_client.find_best_match(search_clean)
+            release_year = igdb_match.release_year if igdb_match else None
+            return GameInfo(
+                name=override_name,
+                release_year=release_year,
+                rating_count=0
+            )
+        search_name = folder_path.name
+        search_clean = GameNameCleaner.clean_for_search(search_name)
+        self.logger.info(f"Searching for: '{search_name}' -> '{search_clean}'")
+        
+        game_info = self.igdb_client.find_best_match(search_clean)
+        if game_info:
+            if self._passes_popularity_filter(game_info):
+                self.logger.info(
+                    f"Found match: {game_info.name} "
+                    f"({game_info.release_year or 'Unknown year'}) "
+                    f"[{game_info.rating_count} ratings]"
+                )
+                return game_info
+                return game_info
+                return game_info
+                return game_info
+            self.logger.warning(
+                f"Game '{game_info.name}' failed popularity filter: "
+                f"{game_info.rating_count} ratings "
+                f"(minimum: {self.config.min_igdb_rating_count})"
+            )
+            return None
+        if self.config.skip_unknown_games:
+            self.logger.warning("Game not found and skip_unknown_games=True")
+            return None
+        self.logger.warning(f"No IGDB match found. Using raw folder name: {search_name}")
+        return GameInfo(
+            name=search_name,
+            release_year=None,
+            rating_count=0
+        )
+    
+    def process(self, folder_path: str, override_name: Optional[str] = None) -> bool:
+        """
+        Main processing pipeline
+        """
+        folder_path = Path(folder_path).resolve()
+        if not folder_path.exists():
+            self.logger.error(f"Path does not exist: {folder_path}")
+            return False
+        
+        # Step 1: Identify game
+        game_info = self.identify_game(folder_path, override_name)
+        if not game_info:
+            return False
+        
+        # Step 2: Handle RAR extraction if needed
+        extraction_success, content_path = self.rar_handler.process_rar_archive(folder_path)
+        
+        if extraction_success:
+            self.logger.info(f"Extracted RAR archive. Content path: {content_path}")
+            compress_path = content_path
+        else:
+            self.logger.info("No RAR archive found or extraction not needed")
+            compress_path = folder_path
+        
+        # Step 3: Compress
+        return self.compressor.compress(compress_path, game_info)
 
-    return True, f"Game is popular enough with {rating_count} ratings"
 
+# ========================= Main Entry Point =========================
 
-def compression(folder_path, game_name, config):
-    store_folder = config["storeFolder"]
-    multithread = config["multithread"]
-    release_date = config["releaseDate"]
-
-    if not os.path.exists(f"{store_folder}{game_name} ({release_date}).7z"):
-        compression_cmd = [config["compressionCMD"]]
-        compression_cmd.extend(['a', f'{store_folder}{game_name} ({release_date})', folder_path])
-        compression_cmd.append(f'-mmt={multithread}')
-        compression_cmd.append('-o ' + store_folder)
-        subprocess.run(compression_cmd)
-        logger.info(f"Successfully compressed {game_name} to {store_folder}{game_name} {release_date}")
-    else:
-        logger.warning(f"File {store_folder}{game_name} already exists! Skipping compression of {folder_path}!")
+def setup_logging(log_file: str, debug: bool = False):
+    """Configure logging"""
+    level = logging.DEBUG if debug else logging.INFO
+    
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()  # Also output to console
+        ]
+    )
 
 
 def main():
-    config = load_config()
-    parser = argparse.ArgumentParser()
-    parser.add_argument("input", help="Input file")
-    parser.add_argument("-c", "--category", action="store", help="Torrent category")
-    parser.add_argument("-n", "--name", action="store", help="Provide the file's name in case we can't pick it up")
-    parser.add_argument("--debug", action="store_true", help="Enable non-interactive debugging mode")
-    parser.add_argument("--force-compress", action="store_true", help="Bypass popularity filters")
+    """Main entry point"""
+    parser = argparse.ArgumentParser(
+        description="Process game folders: fix names, extract RARs, and compress"
+    )
+    parser.add_argument("input", help="Path to game folder")
+    parser.add_argument("-c", "--category", help="Torrent category filter")
+    parser.add_argument("-n", "--name", help="Override game name for search")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--force-compress", action="store_true", help="Bypass popularity filter only")
+    
     args = parser.parse_args()
-    load_logger(config, args.debug)
-    folder_path = args.input
-    logger.debug(f"Loaded passwords: {config['password_list']}")
+    
+    # Load configuration
+    config = Config.from_env()
+    
+    # Setup logging
+    setup_logging(config.log_file_location, args.debug)
+    logger = logging.getLogger(__name__)
+    
+    # Check category if specified
+    if args.category:
+        if args.category != config.category_name:
+            logger.error(f"Category mismatch: {args.category} != {config.category_name}")
+            return 1
+    
+    # If force-compress is set, disable popularity filter for this run
     if args.force_compress:
-        config["enable_popularity_filter"] = False
-        logger.info("Popularity filters bypassed due to --force-compress flag")
-
-    if args.category == config["category_name"]:
-        try:
-            if args.name:
-                game_name = args.name
-            else:
-                game_name = fetch_game_name(folder_path, config)
+        config.enable_popularity_filter = False
+        logger.info("Popularity filter disabled via --force-compress")
+    
+    # Process the game
+    try:
+        processor = GameProcessor(config)
+        success = processor.process(args.input, args.name)
+        
+        if success:
+            logger.info("✓ Processing completed successfully")
+            return 0
+        else:
+            logger.error("✗ Processing failed")
+            return 1
             
-            success, root_folder = handle_rar_file(folder_path, game_name, config)
-            if success:
-                compression_path = os.path.join(folder_path, root_folder) if root_folder else folder_path
-                logger.info(f"  Starting compression from {compression_path}")
-                compression(compression_path, game_name, config)
-                logger.info(f"Successfully compressed {game_name}")
-            else:
-                logger.info(f"No RAR handling needed. Starting direct compression from {folder_path}")
-                compression(folder_path, game_name, config)
-                logger.info(f"Successfully compressed {game_name}")
-        except ValueError as e:
-            if "popularity filter" in str(e).lower() or "skip_unknown_games" in str(e).lower():
-                logger.info(f"Game skipped: {e}")
-                return  # Exit gracefully, don't treat as error
-            else:
-                raise
-        except Exception as e:
-            logger.error(f"Error during processing: {str(e)}")
-            logger.error(f"Failed to process {folder_path}")
-            raise SystemExit(1)
-    else:
-        logger.error(f"Unknown category: {args.category}")
+    except KeyboardInterrupt:
+        logger.info("Process interrupted by user")
+        return 130
+    except Exception as e:
+        logger.exception(f"Unexpected error: {e}")
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    exit(main())
