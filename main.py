@@ -21,9 +21,20 @@ from pathlib import Path
 import rarfile
 import requests
 from dotenv import load_dotenv
+from discord_notifier import notify_game_processed
 
 
 # ========================= Data Classes =========================
+
+class ProcessResult(int):
+    """Subclass of int preserving truthiness while carrying metadata."""
+    def __new__(cls, value: int, *, game_name: str = "", archive_path: Optional[Path] = None, cover_url: Optional[str] = None):
+        obj = int.__new__(cls, value)
+        obj.game_name = game_name
+        obj.archive_path = archive_path
+        obj.cover_url = cover_url
+        return obj
+
 
 @dataclass
 class Config:
@@ -73,6 +84,7 @@ class GameInfo:
     release_year: Optional[int] = None
     rating_count: int = 0
     igdb_id: Optional[int] = None
+    cover_url: Optional[str] = None
 
 
 # ========================= Utilities =========================
@@ -205,7 +217,7 @@ class IGDBClient:
         # IGDB query
         query = f'''
             search "{search_name}";
-            fields name, first_release_date, total_rating_count, id;
+            fields name, first_release_date, total_rating_count, id, cover.image_id;
             where game_modes != null & version_parent = null;
             limit 20;
         '''
@@ -262,15 +274,19 @@ class IGDBClient:
                     best_game['first_release_date']
                 ).year
             
+            cover = best_game.get('cover')
+            image_id = cover.get('image_id') if isinstance(cover, dict) else None
+            cover_url = f"https://images.igdb.com/igdb/image/upload/t_cover_big/{image_id}.jpg" if image_id else None
+            
             return GameInfo(
                 name=best_game['name'],
                 release_year=release_year,
                 rating_count=best_game.get('total_rating_count', 0),
-                igdb_id=best_game.get('id')
+                igdb_id=best_game.get('id'),
+                cover_url=cover_url
             )
         
         return None
-
 
 # ========================= RAR Handler =========================
 
@@ -431,9 +447,9 @@ class GameCompressor:
         self.config = config
         self.logger = logging.getLogger(__name__)
     
-    def compress(self, source_path: Path, game_info: GameInfo) -> bool:
+    def compress(self, source_path: Path, game_info: GameInfo) -> Optional[Path]:
         """
-        Compress game folder to 7z archive
+        Compress game folder to 7z archive. Returns archive path on success, None on failure.
         """
         # Prepare output filename
         game_name_clean = GameNameCleaner.clean_for_filesystem(game_info.name)
@@ -444,7 +460,7 @@ class GameCompressor:
         # Check if already exists
         if output_file.exists():
             self.logger.warning(f"Archive already exists: {output_file}")
-            return False
+            return None
         
         # Ensure output directory exists
         output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -465,7 +481,7 @@ class GameCompressor:
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             self.logger.info(f"Successfully compressed: {output_file.name}")
-            return True
+            return output_file
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Compression failed: {e}")
             self.logger.error(f"Output: {e.stderr}")
@@ -474,7 +490,7 @@ class GameCompressor:
             if output_file.exists():
                 output_file.unlink()
             
-            return False
+            return None
 
 
 # ========================= Main Processor =========================
@@ -543,19 +559,19 @@ class GameProcessor:
             rating_count=0
         )
     
-    def process(self, folder_path: str, override_name: Optional[str] = None) -> bool:
+    def process(self, folder_path: str, override_name: Optional[str] = None) -> ProcessResult:
         """
-        Main processing pipeline
+        Main processing pipeline. Returns ProcessResult (truthy on success).
         """
         folder_path = Path(folder_path).resolve()
         if not folder_path.exists():
             self.logger.error(f"Path does not exist: {folder_path}")
-            return False
+            return ProcessResult(0)
         
         # Step 1: Identify game
         game_info = self.identify_game(folder_path, override_name)
         if not game_info:
-            return False
+            return ProcessResult(0)
         
         # Step 2: Handle RAR extraction if needed
         extraction_success, content_path = self.rar_handler.process_rar_archive(folder_path)
@@ -568,7 +584,19 @@ class GameProcessor:
             compress_path = folder_path
         
         # Step 3: Compress
-        return self.compressor.compress(compress_path, game_info)
+        archive_path = self.compressor.compress(compress_path, game_info)
+        if not archive_path:
+            return ProcessResult(0, game_name=game_info.name)
+        
+        # Step 4: Compute size and return ProcessResult
+        size_gb = archive_path.stat().st_size / (1024 ** 3)
+        self.logger.info(f"Archive size: {size_gb:.2f} GB")
+        return ProcessResult(
+            1,
+            game_name=game_info.name,
+            archive_path=archive_path,
+            cover_url=game_info.cover_url
+        )
 
 
 # ========================= Main Entry Point =========================
@@ -621,10 +649,14 @@ def main():
     # Process the game
     try:
         processor = GameProcessor(config)
-        success = processor.process(args.input, args.name)
+        result = processor.process(args.input, args.name)
         
-        if success:
-            logger.info("✓ Processing completed successfully")
+        if result:
+            size_gb = result.archive_path.stat().st_size / (1024 ** 3) if result.archive_path else 0.0
+            logger.info(f"✓ Processing completed successfully ({size_gb:.2f} GB)")
+            webhook_url = os.getenv('DISCORD_WEBHOOK_URL')
+            if webhook_url:
+                notify_game_processed(webhook_url, result.game_name, size_gb, result.cover_url)
             return 0
         else:
             logger.error("✗ Processing failed")

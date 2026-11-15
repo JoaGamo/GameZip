@@ -1,4 +1,4 @@
-# Real file integration tests for game_processor_refactored.py
+# Real file integration tests for main.py
 
 import os
 import shutil
@@ -8,14 +8,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-# Import the actual module
+# Import the actual module from main.py
 import importlib.util
-spec = importlib.util.spec_from_file_location('game_processor_refactored', '/home/joaco/VisualCode/GameZip/game_processor_refactored.py')
+spec = importlib.util.spec_from_file_location('main', '/home/joaco/VisualCode/GameZip/main.py')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 GameProcessor = mod.GameProcessor
 Config = mod.Config
 RARHandler = mod.RARHandler
+ProcessResult = mod.ProcessResult
 
 class RealFileTests(unittest.TestCase):
     def setUp(self):
