@@ -12,7 +12,7 @@ class TestNotifyGameProcessed:
         args, kwargs = mock_post.call_args
         payload = kwargs["json"]
         embed = payload["embeds"][0]
-        assert embed["title"] == "Game processed successfully"
+        assert embed["title"] == "New game added!"
         assert embed["color"] == 0x00FF00
         assert embed["image"]["url"] == "https://images.igdb.com/igdb/image/upload/t_cover_big/abc123.jpg"
         assert embed["thumbnail"]["url"] == "https://images.igdb.com/igdb/image/upload/t_cover_big/abc123.jpg"

@@ -11,7 +11,7 @@ def notify_game_processed(webhook_url: str, game_name: str, size_gb: float, cove
         cover_url: Optional IGDB cover image URL.
     """
     embed = {
-        "title": "Game processed successfully",
+        "title": "New game added!",
         "color": 0x00FF00,  # green
         "fields": [
             {"name": "Game", "value": game_name, "inline": True},
