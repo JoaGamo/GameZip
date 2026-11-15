@@ -14,17 +14,20 @@ class TestNotifyGameProcessed:
         embed = payload["embeds"][0]
         assert embed["title"] == "Game processed successfully"
         assert embed["color"] == 0x00FF00
+        assert embed["image"]["url"] == "https://images.igdb.com/igdb/image/upload/t_cover_big/abc123.jpg"
+        assert embed["thumbnail"]["url"] == "https://images.igdb.com/igdb/image/upload/t_cover_big/abc123.jpg"
         fields = embed["fields"]
         assert fields[0] == {"name": "Game", "value": "Minecraft", "inline": True}
         assert fields[1] == {"name": "Size", "value": "1.50 GB", "inline": True}
-        assert fields[2] == {"name": "Cover", "value": "https://images.igdb.com/igdb/image/upload/t_cover_big/abc123.jpg", "inline": True}
         assert kwargs["timeout"] == 10
 
     @patch("discord_notifier.requests.post")
     def test_no_cover_url(self, mock_post):
         mock_post.return_value.status_code = 204
         notify_game_processed("https://discord.com/api/webhook/test", "Minecraft", 2.0)
-        fields = mock_post.call_args.kwargs["json"]["embeds"][0]["fields"]
+        embed = mock_post.call_args.kwargs["json"]["embeds"][0]
+        assert "image" not in embed
+        fields = embed["fields"]
         assert len(fields) == 2
 
     @patch("discord_notifier.requests.post")

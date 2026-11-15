@@ -19,7 +19,8 @@ def notify_game_processed(webhook_url: str, game_name: str, size_gb: float, cove
         ]
     }
     if cover_url:
-        embed["fields"].append({"name": "Cover", "value": cover_url, "inline": True})
+        embed["image"] = {"url": cover_url}
+        embed["thumbnail"] = {"url": cover_url}
     payload = {"embeds": [embed]}
     try:
         response = requests.post(webhook_url, json=payload, timeout=10)
