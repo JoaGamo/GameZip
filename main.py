@@ -51,6 +51,7 @@ class Config:
     skip_unknown_games: bool
     enable_popularity_filter: bool
     min_igdb_rating_count: int
+    compression_level: int
     
     @classmethod
     def from_env(cls) -> 'Config':
@@ -73,7 +74,8 @@ class Config:
             password_list=[p.strip() for p in os.getenv("password_list", "").split(",") if p.strip()],
             enable_popularity_filter=os.getenv("ENABLE_POPULARITY_FILTER", "false").lower() == "true",
             min_igdb_rating_count=int(os.getenv("MIN_IGDB_RATING_COUNT", "100")),
-            skip_unknown_games=os.getenv("SKIP_UNKNOWN_GAMES", "false").lower() == "true"
+            skip_unknown_games=os.getenv("SKIP_UNKNOWN_GAMES", "false").lower() == "true",
+            compression_level=int(os.getenv("COMPRESSION_LEVEL", "5"))
         )
 
 
@@ -470,7 +472,7 @@ class GameCompressor:
             self.config.compression_cmd,
             'a',  # Add to archive
             '-t7z',  # 7z format
-            '-mx=5',  # Compression level (5 = normal)
+            f'-mx={self.config.compression_level}',
             f'-mmt={self.config.multithread}',  # Multi-threading
             str(output_file),
             str(source_path) + '/*'
